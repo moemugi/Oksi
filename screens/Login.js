@@ -1,11 +1,36 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Login({ navigation }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  const handleSignIn = async () => {
+    try {
+      const hasSeenWelcome = await AsyncStorage.getItem('hasSeenWelcome');
+
+      if (!hasSeenWelcome) {
+        navigation.replace('Welcome');
+      } else {
+        navigation.replace('MainApp');
+      }
+    } catch (error) {
+      console.error('Error checking welcome screen flag:', error);
+      navigation.replace('MainApp');
+    }
+  };
+
+  const resetWelcomeFlag = async () => {
+    try {
+      await AsyncStorage.removeItem('hasSeenWelcome');
+      alert('Welcome screen flag reset! It will show again on next sign in.');
+    } catch (error) {
+      console.error('Error resetting flag:', error);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -38,8 +63,13 @@ export default function Login({ navigation }) {
 
       <Text style={styles.forgot}>Forgot your password?</Text>
 
-      <TouchableOpacity style={styles.button} onPress={() => navigation.navigate('MainApp')}>
-       <Text style={styles.buttonText}>Sign in</Text>
+      <TouchableOpacity style={styles.button} onPress={handleSignIn}>
+        <Text style={styles.buttonText}>Sign in</Text>
+      </TouchableOpacity>
+
+      {/* Temporary reset button */}
+      <TouchableOpacity style={[styles.button, { backgroundColor: '#888' }]} onPress={resetWelcomeFlag}>
+        <Text style={styles.buttonText}>Reset Welcome Screen</Text>
       </TouchableOpacity>
 
       <Text style={styles.signupText}>

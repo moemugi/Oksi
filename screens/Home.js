@@ -1,22 +1,47 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+} from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 
+const API_KEY = "bd96cb9d18e16f8796d773ef208270be";
+const CITY = "Quezon City";
+
+const weatherIcons = {
+  Clear: "sunny",
+  Clouds: "cloudy",
+  Rain: "rainy",
+  Drizzle: "rainy",
+  Thunderstorm: "thunderstorm",
+  Snow: "snow",
+  Mist: "cloudy",
+};
+
 export default function HomeScreen() {
-  const [weather, setWeather] = useState(null);
+  const [current, setCurrent] = useState(null);
+  const [forecast, setForecast] = useState([]);
 
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        const API_KEY = "bd96cb9d18e16f8796d773ef208270be";
-        const city = "Quezon City";
-        const res = await axios.get(
-          `https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${API_KEY}`
-        );
-        setWeather(res.data);
-      } catch (error) {
-        console.error(error);
+        const [curRes, fcRes] = await Promise.all([
+          axios.get(
+            `https://api.openweathermap.org/data/2.5/weather?q=${CITY}&units=metric&appid=${API_KEY}`
+          ),
+          axios.get(
+            `https://api.openweathermap.org/data/2.5/forecast?q=${CITY}&units=metric&appid=${API_KEY}`
+          ),
+        ]);
+
+        setCurrent(curRes.data);
+        setForecast(fcRes.data.list.slice(0, 3)); // next 3 forecast slots
+      } catch (err) {
+        console.error("Weather fetch failed:", err);
       }
     };
     fetchWeather();
@@ -24,54 +49,68 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Header */}
-
       {/* Weather Section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Weather</Text>
-        <Text style={{ textAlign: "center" }}>Metro Manila, Quezon City</Text>
+        <Text style={{ textAlign: "center", color: "#555" }}>{CITY}</Text>
         <Text style={styles.temperature}>
-          {weather ? `${Math.round(weather.main.temp)}°` : "--"}
+          {current ? `${Math.round(current.main.temp)}°C` : "--°"}
+        </Text>
+        <Text style={styles.description}>
+          {current && current.weather[0].main}
         </Text>
 
         <View style={styles.weatherCards}>
-          <View style={styles.weatherCard}>
-            <Text>10 AM</Text>
-            <Text>30°</Text>
-            <Ionicons name="partly-sunny" size={28} color="#f5a623" />
-            <Text>Partly Cloudy</Text>
-          </View>
-          <View style={styles.weatherCard}>
-            <Text>Now</Text>
-            <Text>{weather ? `${Math.round(weather.main.temp)}°` : "--"}</Text>
-            <Ionicons name="rainy" size={28} color="#4A90E2" />
-            <Text>Rainy</Text>
-          </View>
-          <View style={styles.weatherCard}>
-            <Text>12 PM</Text>
-            <Text>28°</Text>
-            <Ionicons name="rainy" size={28} color="#4A90E2" />
-            <Text>Rainy</Text>
-          </View>
+          {forecast.map((item, idx) => {
+            const dt = new Date(item.dt * 1000);
+            const hours = dt.getHours();
+            const timeLabel = `${hours}:00`;
+            const main = item.weather[0].main;
+            const iconName = weatherIcons[main] || "cloud-outline";
+            return (
+              <View key={idx} style={styles.weatherCard}>
+                <Text style={styles.weatherTime}>{timeLabel}</Text>
+                <Ionicons name={iconName} size={28} color="#333" />
+                <Text style={styles.weatherTemp}>
+                  {Math.round(item.main.temp)}°C
+                </Text>
+                <Text style={styles.weatherDesc}>{main}</Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
       {/* Water Container Calibration */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Water Container Calibration</Text>
-        <TouchableOpacity style={styles.card}>
-          <Text>Set up your water container here. Click to start configuration</Text>
+        <TouchableOpacity style={styles.cardButton}>
+          <Ionicons name="water-outline" size={32} color="#0288d1" />
+          <View style={{ marginLeft: 10, flex: 1 }}>
+            <Text style={styles.cardTitle}>Set up your water container</Text>
+            <Text style={styles.cardSubtitle}>
+              Tap to start configuration and calibration process
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={24} color="#555" />
         </TouchableOpacity>
       </View>
 
       {/* Crop Health Status */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Crop Health Status</Text>
-        <View style={styles.card}>
-          <Text>💧Moisture Level: 45%</Text>
-          <Text>⚠ Status: Below Optimal</Text>
+        <View style={styles.healthCard}>
+          <Ionicons name="leaf-outline" size={32} color="#4caf50" />
+          <View style={{ marginLeft: 10, flex: 1 }}>
+            <Text style={styles.cardTitle}>Moisture Level: 45%</Text>
+            <Text style={[styles.cardSubtitle, { color: "#d32f2f" }]}>
+              ⚠ Below Optimal
+            </Text>
+            <Text style={styles.lastUpdated}>
+              Last updated 5 mins ago
+            </Text>
+          </View>
         </View>
-        <Text style={{ fontSize: 12, color: "gray" }}>Last updated 5 mins ago</Text>
       </View>
     </ScrollView>
   );
@@ -79,32 +118,49 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#3A854E",
-    padding: 10,
-  },
-  headerText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
-  welcome: { color: "#fff", fontSize: 12, marginLeft: 5 },
-  profile: { width: 30, height: 30, borderRadius: 15, marginLeft: 10 },
   section: { padding: 15 },
-  sectionTitle: { fontSize: 16, fontWeight: "bold", marginBottom: 10 },
-  temperature: { fontSize: 28, fontWeight: "bold", textAlign: "center" },
-  weatherCards: { flexDirection: "row", justifyContent: "space-around", marginTop: 10 },
+  sectionTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 10 },
+  temperature: { fontSize: 36, fontWeight: "bold", textAlign: "center" },
+  description: {
+    fontSize: 18,
+    textAlign: "center",
+    color: "#555",
+    marginVertical: 5,
+  },
+  weatherCards: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 15,
+  },
   weatherCard: {
-    backgroundColor: "#fff7e6",
+    backgroundColor: "#e0f7fa",
     padding: 10,
     borderRadius: 10,
     alignItems: "center",
-    width: 90,
+    width: 100,
     elevation: 2,
   },
-  card: {
-    backgroundColor: "#f5f5f5",
+  weatherTime: { fontWeight: "bold", marginBottom: 5 },
+  weatherTemp: { fontSize: 16, fontWeight: "bold", marginTop: 5 },
+  weatherDesc: { fontSize: 12, color: "#555" },
+
+  cardButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e3f2fd",
     padding: 15,
-    borderRadius: 15,
-    elevation: 1,
+    borderRadius: 10,
+    elevation: 2,
   },
+  cardTitle: { fontSize: 16, fontWeight: "600" },
+  cardSubtitle: { fontSize: 12, color: "#555", marginTop: 3 },
+  healthCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f8e9",
+    padding: 15,
+    borderRadius: 10,
+    elevation: 2,
+  },
+  lastUpdated: { fontSize: 10, color: "gray", marginTop: 5 },
 });

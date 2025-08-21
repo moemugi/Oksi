@@ -3,6 +3,7 @@ import 'react-native-reanimated';
 import { View, Animated, StyleSheet, Image, Text } from 'react-native';
 import LoginScreen from './screens/Login';
 import SignupScreen from './screens/Signup';
+import WelcomeScreen from './screens/Welcome';
 import TabNavigator from './navigation/TabNavigator';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -99,6 +100,7 @@ export default function App() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Signup" component={SignupScreen} />
+        <Stack.Screen name="Welcome" component={WelcomeScreen} />
         <Stack.Screen name="MainApp" component={DrawerNavigator} />
       </Stack.Navigator>
     </NavigationContainer>
