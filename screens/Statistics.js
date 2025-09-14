@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,9 +9,13 @@ import {
   FlatList,
   Pressable,
   SafeAreaView,
+  ActivityIndicator,
+  ScrollView, 
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
 import { Ionicons } from "@expo/vector-icons";
+import { supabase } from "../lib/supabase";
+
 
 const screenWidth = Dimensions.get("window").width - 40;
 
@@ -22,8 +26,6 @@ function Dropdown({ label, options, value, onChange }) {
   return (
     <View style={styles.pickerBlock}>
       <Text style={styles.filterLabel}>{label}</Text>
-
-      {/* Closed state: shows selected label */}
       <TouchableOpacity
         activeOpacity={0.8}
         style={styles.pickerWrapper}
@@ -35,7 +37,6 @@ function Dropdown({ label, options, value, onChange }) {
         <Ionicons name="chevron-down" size={20} color="#333" />
       </TouchableOpacity>
 
-      {/* Modal dropdown */}
       <Modal
         visible={open}
         transparent={true}
@@ -86,101 +87,169 @@ export default function Statistics() {
 
   const [timeRange, setTimeRange] = useState(timeOptions[0].value);
   const [device, setDevice] = useState(deviceOptions[0].value);
+  const [sensorData, setSensorData] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // placeholder chart data
+  // Fetch data from Supabase
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("sensor_data")
+        .select("*")
+        .order("created_at", { ascending: true })
+        .limit(20);
+
+      if (error) {
+        console.error(error);
+      } else {
+        setSensorData(data);
+      }
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [timeRange, device]);
+
+  // Prepare chart data
   const chartData = {
-    labels: ["06:00", "09:00", "12:00", "15:00", "18:00", "21:00"],
+    labels: sensorData.map((d) =>
+      new Date(d.created_at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    ),
     datasets: [
       {
-        data: [30, 27, 25, 22, 28, 26],
+        data: sensorData.map((d) => d.soil || 0), // soil moisture trend
       },
     ],
   };
 
+  // Calculate summary stats
+  const avgTemp =
+    sensorData.length > 0
+      ? (
+          sensorData.reduce((sum, d) => sum + d.temperature, 0) /
+          sensorData.length
+        ).toFixed(1)
+      : "--";
+  const maxHumidity =
+    sensorData.length > 0
+      ? Math.max(...sensorData.map((d) => d.humidity || 0))
+      : "--";
+  const rainStatus =
+    sensorData.length > 0
+      ? sensorData[sensorData.length - 1].rain
+      : "Unknown";
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Plot Bed: Okra</Text>
+    <SafeAreaView style={{ flex: 1 }}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={{ paddingBottom: 40 }}
+      >
+        <Text style={styles.title}>Plot Bed: Okra</Text>
 
-      {/* Two-column dropdowns (labels on top, dropdown under) */}
-      <View style={styles.filters}>
-        <Dropdown
-          label="Time Range"
-          options={timeOptions}
-          value={timeRange}
-          onChange={setTimeRange}
-        />
-        <Dropdown
-          label="Device"
-          options={deviceOptions}
-          value={device}
-          onChange={setDevice}
-        />
-      </View>
-
-      <Text style={styles.chartTitle}>
-        Plot Bed Moisture & Watering Logs {"\n"}({timeOptions.find(t => t.value === timeRange).label})
-      </Text>
-
-      <View style={styles.chartCard}>
-        <LineChart
-          data={chartData}
-          width={screenWidth}
-          height={220}
-          chartConfig={{
-            backgroundColor: "#fff",
-            backgroundGradientFrom: "#fff",
-            backgroundGradientTo: "#fff",
-            decimalPlaces: 0,
-            color: (opacity = 1) => `rgba(0, 0, 255, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-            propsForDots: { r: "4", strokeWidth: "2", stroke: "#0000FF" },
-          }}
-          bezier
-          style={{ borderRadius: 12 }}
-        />
-      </View>
-
-      <Text style={styles.sectionTitle}>Environmental Sensors (Last 24 Hours)</Text>
-
-      <View style={styles.sensorBox}>
-        <View style={styles.sensorItem}>
-          <Ionicons name="thermometer-outline" size={24} color="black" />
-          <Text style={styles.sensorText}>Average Temperature</Text>
-          <Text style={styles.sensorValue}>32°C</Text>
+        {/* Dropdown filters */}
+        <View style={styles.filters}>
+          <Dropdown
+            label="Time Range"
+            options={timeOptions}
+            value={timeRange}
+            onChange={setTimeRange}
+          />
+          <Dropdown
+            label="Device"
+            options={deviceOptions}
+            value={device}
+            onChange={setDevice}
+          />
         </View>
 
-        <View style={styles.sensorItem}>
-          <Ionicons name="water-outline" size={24} color="black" />
-          <Text style={styles.sensorText}>Max Humidity</Text>
-          <Text style={styles.sensorValue}>47%</Text>
-        </View>
+        {loading ? (
+          <ActivityIndicator size="large" color="#4CAF50" />
+        ) : (
+          <>
+            <Text style={styles.chartTitle}>
+              Soil Moisture Logs (
+              {timeOptions.find((t) => t.value === timeRange).label})
+            </Text>
 
-        <View style={styles.sensorItem}>
-          <Ionicons name="sunny-outline" size={24} color="black" />
-          <Text style={styles.sensorText}>Max Light Exposure</Text>
-          <Text style={styles.sensorValue}>65%</Text>
-        </View>
-      </View>
+            <View style={styles.chartCard}>
+              <LineChart
+                data={chartData}
+                width={screenWidth}
+                height={220}
+                chartConfig={{
+                  backgroundColor: "#fff",
+                  backgroundGradientFrom: "#fff",
+                  backgroundGradientTo: "#fff",
+                  decimalPlaces: 0,
+                  color: (opacity = 1) => `rgba(0, 0, 255, ${opacity})`,
+                  labelColor: (opacity = 1) =>
+                    `rgba(0, 0, 0, ${opacity})`,
+                  propsForDots: {
+                    r: "4",
+                    strokeWidth: "2",
+                    stroke: "#0000FF",
+                  },
+                }}
+                bezier
+                style={{ borderRadius: 12 }}
+              />
+            </View>
 
-      <TouchableOpacity style={styles.button}>
-        <Text style={styles.buttonText}>Generate Report</Text>
-      </TouchableOpacity>
-    </View>
+            <Text style={styles.sectionTitle}>
+              Environmental Sensors (
+              {timeOptions.find((t) => t.value === timeRange).label})
+            </Text>
+
+            <View style={styles.sensorBox}>
+              <View style={styles.sensorItem}>
+                <Ionicons name="thermometer-outline" size={24} color="black" />
+                <Text style={styles.sensorText}>Average Temp</Text>
+                <Text style={styles.sensorValue}>{avgTemp}°C</Text>
+              </View>
+
+              <View style={styles.sensorItem}>
+                <Ionicons name="water-outline" size={24} color="black" />
+                <Text style={styles.sensorText}>Max Humidity</Text>
+                <Text style={styles.sensorValue}>{maxHumidity}%</Text>
+              </View>
+
+              <View style={styles.sensorItem}>
+                <Ionicons name="rainy-outline" size={24} color="black" />
+                <Text style={styles.sensorText}>Rain Status</Text>
+                <Text style={styles.sensorValue}>{rainStatus}</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity style={styles.button}>
+              <Text style={styles.buttonText}>Generate Report</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff", padding: 20 },
   title: { fontSize: 18, fontWeight: "bold", marginBottom: 12 },
-
   filters: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 14,
   },
-  pickerBlock: { width: "48%" }, // two columns, each ~48%
-  filterLabel: { fontSize: 13, fontWeight: "600", marginBottom: 6, color: "#333" },
-
+  pickerBlock: { width: "48%" },
+  filterLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
+    color: "#333",
+  },
   pickerWrapper: {
     minHeight: 44,
     borderWidth: 1,
@@ -194,7 +263,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAFA",
   },
   selectedText: { fontSize: 14, color: "#111", flexShrink: 1, lineHeight: 18 },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -217,8 +285,12 @@ const styles = StyleSheet.create({
   },
   optionText: { fontSize: 15, color: "#111" },
   sep: { height: 1, backgroundColor: "#EEE", marginHorizontal: 8 },
-
-  chartTitle: { textAlign: "center", fontWeight: "bold", marginBottom: 8, fontSize: 15 },
+  chartTitle: {
+    textAlign: "center",
+    fontWeight: "bold",
+    marginBottom: 8,
+    fontSize: 15,
+  },
   chartCard: {
     backgroundColor: "#F4F8FF",
     padding: 10,
@@ -226,7 +298,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "center",
   },
-
   sectionTitle: { marginTop: 8, fontWeight: "bold", fontSize: 16 },
   sensorBox: {
     flexDirection: "row",
@@ -239,7 +310,6 @@ const styles = StyleSheet.create({
   sensorItem: { alignItems: "center", flex: 1 },
   sensorText: { fontSize: 12, color: "#333" },
   sensorValue: { fontSize: 16, fontWeight: "bold", marginTop: 4 },
-
   button: {
     marginTop: 20,
     backgroundColor: "#4CAF50",
