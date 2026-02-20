@@ -1,57 +1,72 @@
-// screens/AboutApp.js
 import React from "react";
-import { View, Text, StyleSheet, Image, Linking, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  Linking,
+  ScrollView,
+  TouchableOpacity,
+} from "react-native";
+import { MaterialIcons, FontAwesome } from "@expo/vector-icons";
 
 export default function AboutApp() {
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {/* Logo */}
       <Image source={require("../assets/Oksi.png")} style={styles.logo} />
+      <Text style={styles.tagline}>Your Smart Urban Farming Companion</Text>
 
       {/* About Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>About Oksi</Text>
-        <Text style={styles.version}>Version: 1.0.0</Text>
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <MaterialIcons name="info" size={24} color="#4CAF50" />
+          <Text style={styles.sectionTitle}>About Oksi</Text>
+        </View>
+        <Text style={styles.version}>Version 1.0.0</Text>
         <Text style={styles.description}>
-          OKSI is a smart urban farming assistant designed to help you monitor and automate watering for your crops.
-          Using real-time sensor data.
+          OKSI is your smart urban farming assistant. Monitor real-time sensor
+          data, automate watering, and grow healthier crops effortlessly!
         </Text>
       </View>
 
-      {/* Developer Info */}
-      <View style={styles.section}>
-        <Text style={styles.label}>Developed by:</Text>
+      {/* Team Section */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <FontAwesome name="users" size={24} color="#2196F3" />
+          <Text style={styles.sectionTitle}>Team & Support</Text>
+        </View>
+        <Text style={styles.label}>Developed by</Text>
         <Text style={styles.text}>The Oksi Team</Text>
 
-        <Text style={styles.label}>Support:</Text>
-        <Text
-          style={styles.link}
+        <Text style={styles.label}>Support</Text>
+        <TouchableOpacity
           onPress={() => Linking.openURL("mailto:qsbaysic@tip.edu.ph")}
         >
-          qsbaysic@tip.edu.ph
-        </Text>
+          <Text style={styles.link}>qsbaysic@tip.edu.ph</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Policies */}
-      <View style={styles.section}>
-        <Text
-          style={styles.link}
+      {/* Legal Section */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <MaterialIcons name="gavel" size={24} color="#FF9800" />
+          <Text style={styles.sectionTitle}>Legal</Text>
+        </View>
+        <TouchableOpacity
           onPress={() => Linking.openURL("https://yourdomain.com/privacy")}
         >
-          [View Privacy Policy]
-        </Text>
-
-        <Text
-          style={styles.link}
+          <Text style={styles.link}>Privacy Policy</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           onPress={() => Linking.openURL("https://yourdomain.com/terms")}
         >
-          [View Terms of Service]
-        </Text>
+          <Text style={styles.link}>Terms of Service</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Footer */}
       <Text style={styles.footer}>
-        Thank you for choosing OKSI—making urban farming easier, smarter, and more sustainable!
+        Thank you for choosing OKSI—making urban farming easier, smarter, and
+        more sustainable!
       </Text>
       <Text style={styles.copy}>&copy; 2025 OKSI. All rights reserved.</Text>
     </ScrollView>
@@ -63,67 +78,83 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: "center",
     padding: 20,
-    backgroundColor: "#fff",
+    backgroundColor: "#F0F4F8",
   },
   logo: {
-    width: 120,
-    height: 120,
+    width: 140,
+    height: 140,
     resizeMode: "contain",
     marginBottom: 10,
   },
   tagline: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#2E7D32",
-    marginBottom: 20,
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#4CAF50",
+    marginBottom: 25,
+    textAlign: "center",
   },
-  section: {
-    marginBottom: 20,
+  card: {
     width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 5,
-    color: "#000",
+    fontWeight: "700",
+    marginLeft: 10,
+    color: "#1B1B1B",
   },
   version: {
-    fontSize: 14,
-    marginBottom: 10,
-    color: "#555",
+    fontSize: 13,
+    color: "#777",
+    marginBottom: 8,
   },
   description: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
     color: "#444",
   },
   label: {
     fontSize: 14,
-    fontWeight: "bold",
-    marginTop: 8,
-    color: "#000",
+    fontWeight: "600",
+    marginTop: 12,
+    color: "#333",
   },
   text: {
     fontSize: 14,
-    color: "#444",
+    color: "#555",
+    marginTop: 2,
   },
   link: {
     fontSize: 14,
-    color: "#3F51B5",
-    marginTop: 8,
+    color: "#2196F3",
+    marginTop: 6,
     textDecorationLine: "underline",
   },
   footer: {
-    fontSize: 12,
-    color: "#777",
+    fontSize: 13,
+    color: "#666",
     textAlign: "center",
-    marginTop: 20,
+    marginTop: 25,
+    paddingHorizontal: 10,
   },
   copy: {
     fontSize: 12,
-    color: "#777",
+    color: "#999",
     textAlign: "center",
-    marginTop: 5,
-    marginBottom: 20,
+    marginTop: 8,
+    marginBottom: 30,
   },
 });

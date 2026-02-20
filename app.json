@@ -6,30 +6,56 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/OksiMainLogo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#FFFFFF"
     },
+    "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
+      "package": "com.dahlia26.Oksi",
       "edgeToEdgeEnabled": true,
-      "package": "com.xyrus16.Oksi"
+      "userInterfaceStyle": "light",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_STATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFFFFF"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "scheme": "oksi",
     "extra": {
+      "supabaseUrl": "https://vesmleiliahbfqpcjtix.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlc21sZWlsaWFoYmZxcGNqdGl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4MjM2NDQsImV4cCI6MjA3MjM5OTY0NH0.N5ePU-NWW2FxhG9y3oVTHAXSZHymuC5JtRRYQcnpm6k",
       "eas": {
         "projectId": "bceaf73e-ce37-4998-88d6-0287ae3d67c6"
       }
-    }
+    },
+    "plugins": [
+      "expo-web-browser",
+      "expo-file-system"
+    ]
   }
 }

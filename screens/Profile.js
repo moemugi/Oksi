@@ -20,85 +20,75 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
-  // Editable fields
   const [username, setUsername] = useState("");
   const [contactNumber, setContactNumber] = useState("");
   const [email, setEmail] = useState("");
 
-  
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      const { data } = await supabase.auth.getSession();
+      const u = data?.session?.user ?? null;
+      if (!mounted) return;
+      setUser(u);
 
-  // Load session reliably on React Native and keep it in sync
-useEffect(() => {
-  let mounted = true;
-  const load = async () => {
-    setLoading(true);
-    const { data } = await supabase.auth.getSession();
-    const u = data?.session?.user ?? null;
-    if (!mounted) return;
-    setUser(u);
-
-    if (u) {
-      // fetch profile row
-      const { data: prof, error } = await supabase
-        .from("profiles")
-        .select("username, full_name, avatar_url")
-        .eq("id", u.id)
-        .single();
-      if (!error && prof) {
-        setUsername(prof.username || "");
-        setEmail(u.email || "");
-        setContactNumber(u.user_metadata?.contact_number || "");
-      } else {
-        // fallback to metadata if no profile yet
-        setUsername(u.user_metadata?.username || "");
-        setEmail(u.email || "");
-        setContactNumber(u.user_metadata?.contact_number || "");
+      if (u) {
+        const { data: prof, error } = await supabase
+          .from("profiles")
+          .select("username, full_name, avatar_url")
+          .eq("id", u.id)
+          .single();
+        if (!error && prof) {
+          setUsername(prof.username || "");
+          setEmail(u.email || "");
+          setContactNumber(u.user_metadata?.contact_number || "");
+        } else {
+          setUsername(u.user_metadata?.username || "");
+          setEmail(u.email || "");
+          setContactNumber(u.user_metadata?.contact_number || "");
+        }
       }
-    }
-    setLoading(false);
-  };
+      setLoading(false);
+    };
 
-  const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-    if (!mounted) return;
-    const u = session?.user ?? null;
-    setUser(u);
-  });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (!mounted) return;
+      const u = session?.user ?? null;
+      setUser(u);
+    });
 
-  load();
-  return () => {
-    mounted = false;
-    sub.subscription.unsubscribe();
-  };
-}, []);
+    load();
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
-const handleSave = async () => {
-  if (!user) return;
-  setLoading(true);
-  try {
-    // Update only profiles.username
-    const { error: profErr } = await supabase
-      .from("profiles")
-      .upsert(
+  const handleSave = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const { error: profErr } = await supabase.from("profiles").upsert(
         {
-          id: user.id, // must match the auth user id
+          id: user.id,
           username: username || null,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "id" }
+        { onConflict: "id" },
       );
 
-    if (profErr) throw profErr;
+      if (profErr) throw profErr;
 
-    Alert.alert("Success", "Username updated successfully.");
-    setEditing(false);
-  } catch (e) {
-    console.error("Update profile error:", e);
-    Alert.alert("Error", e.message || "Failed to update username.");
-  } finally {
-    setLoading(false);
-  }
-};
-
+      Alert.alert("Success", "Username updated successfully.");
+      setEditing(false);
+    } catch (e) {
+      console.error("Update profile error:", e);
+      Alert.alert("Error", e.message || "Failed to update username.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAvatarUpload = async () => {
     try {
@@ -107,17 +97,15 @@ const handleSave = async () => {
         return;
       }
 
-      // Permissions for iOS
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         Alert.alert(
           "Permission needed",
-          "Please allow photo library access to upload an avatar."
+          "Please allow photo library access to upload an avatar.",
         );
         return;
       }
 
-      // Open picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -132,47 +120,45 @@ const handleSave = async () => {
         return;
       }
 
-// Prepare file as Uint8Array instead of blob
-const resp = await fetch(uri);
-const arrayBuffer = await resp.arrayBuffer();
-const fileName = `${uuidv4()}.jpg`;
-const filePath = `avatars/${user.id}/${fileName}`;
+      const resp = await fetch(uri);
+      const arrayBuffer = await resp.arrayBuffer();
+      const fileName = `${uuidv4()}.jpg`;
+      const filePath = `avatars/${user.id}/${fileName}`;
 
-// Upload to Supabase Storage
-const { error: uploadError } = await supabase.storage
-  .from("avatars")
-  .upload(filePath, new Uint8Array(arrayBuffer), {
-    contentType: "image/jpeg",
-  });
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, new Uint8Array(arrayBuffer), {
+          contentType: "image/jpeg",
+        });
 
-if (uploadError) throw uploadError;
+      if (uploadError) throw uploadError;
 
-// Get public URL
-const { data: urlData, error: urlErr } = supabase.storage
-  .from("avatars")
-  .getPublicUrl(filePath);
+      const { data: urlData, error: urlErr } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(filePath);
 
-if (urlErr) throw urlErr;
+      if (urlErr) throw urlErr;
 
-const publicUrl = urlData.publicUrl;
+      const publicUrl = urlData.publicUrl;
 
-// Update profile row
-const { error: profErr } = await supabase
-  .from("profiles")
-  .upsert({ id: user.id, avatar_url: publicUrl }, { onConflict: "id" });
+      const { error: profErr } = await supabase
+        .from("profiles")
+        .upsert({ id: user.id, avatar_url: publicUrl }, { onConflict: "id" });
 
-if (profErr) throw profErr;
+      if (profErr) throw profErr;
 
-// Update auth metadata too
-await supabase.auth.updateUser({
-  data: { avatar_url: publicUrl },
-});
+      await supabase.auth.updateUser({
+        data: { avatar_url: publicUrl },
+      });
 
-// Update local state
-setUser((prev) =>
-  prev ? { ...prev, user_metadata: { ...prev.user_metadata, avatar_url: publicUrl } } : prev
-);
-
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              user_metadata: { ...prev.user_metadata, avatar_url: publicUrl },
+            }
+          : prev,
+      );
 
       Alert.alert("Success", "Profile picture updated!");
     } catch (e) {
@@ -202,17 +188,17 @@ setUser((prev) =>
 
   return (
     <View style={styles.container}>
-      {/* Profile Picture */}
       <View style={styles.profileContainer}>
         <Image source={{ uri: avatarUri }} style={styles.profileImage} />
-        <TouchableOpacity style={styles.cameraIcon} onPress={handleAvatarUpload}>
+        <TouchableOpacity
+          style={styles.cameraIcon}
+          onPress={handleAvatarUpload}
+        >
           <Ionicons name="camera" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* Info Card */}
       <View style={styles.infoCard}>
-        {/* Username */}
         <View style={styles.row}>
           <Ionicons name="person-circle" size={22} color="#333" />
           <Text style={styles.label}>Username</Text>
@@ -227,7 +213,6 @@ setUser((prev) =>
           <Text style={styles.value}>{username || "No username"}</Text>
         )}
 
-        {/* Contact Number */}
         <View style={styles.row}>
           <Ionicons name="call" size={22} color="#333" />
           <Text style={styles.label}>Contact Number</Text>
@@ -243,7 +228,6 @@ setUser((prev) =>
           <Text style={styles.value}>{contactNumber || "N/A"}</Text>
         )}
 
-        {/* Email Address */}
         <View style={styles.row}>
           <Ionicons name="mail" size={22} color="#333" />
           <Text style={styles.label}>Email Address</Text>
@@ -260,7 +244,6 @@ setUser((prev) =>
           <Text style={styles.value}>{email}</Text>
         )}
 
-        {/* Buttons */}
         {editing ? (
           <View style={styles.buttonRow}>
             <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
@@ -289,9 +272,19 @@ setUser((prev) =>
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff", alignItems: "center", paddingTop: 40 },
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    paddingTop: 40,
+  },
   profileContainer: { alignItems: "center", marginBottom: 20 },
-  profileImage: { width: 120, height: 120, borderRadius: 60, backgroundColor: "#eee" },
+  profileImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "#eee",
+  },
   cameraIcon: {
     position: "absolute",
     bottom: 5,
@@ -327,7 +320,11 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     elevation: 3,
   },
-  buttonRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 20 },
+  buttonRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 20,
+  },
   saveButton: {
     flexDirection: "row",
     alignItems: "center",
