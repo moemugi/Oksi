@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,9 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -17,76 +20,102 @@ import { supabase } from "../lib/supabase";
 
 export default function ProfileScreen() {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(true);
   const [editing, setEditing] = useState(false);
 
   const [username, setUsername] = useState("");
   const [contactNumber, setContactNumber] = useState("");
   const [email, setEmail] = useState("");
 
+  const avatarUri = useMemo(() => {
+    return user?.user_metadata?.avatar_url || "https://placekitten.com/200/200";
+  }, [user]);
+
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      const { data } = await supabase.auth.getSession();
-      const u = data?.session?.user ?? null;
-      if (!mounted) return;
-      setUser(u);
 
-      if (u) {
-        const { data: prof, error } = await supabase
-          .from("profiles")
-          .select("username, full_name, avatar_url")
-          .eq("id", u.id)
-          .single();
-        if (!error && prof) {
-          setUsername(prof.username || "");
-          setEmail(u.email || "");
-          setContactNumber(u.user_metadata?.contact_number || "");
-        } else {
-          setUsername(u.user_metadata?.username || "");
-          setEmail(u.email || "");
-          setContactNumber(u.user_metadata?.contact_number || "");
+    const load = async () => {
+      try {
+        setBusy(true);
+
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        const u = data?.session?.user ?? null;
+        if (!mounted) return;
+
+        setUser(u);
+
+        if (u) {
+          // pull profile (username + avatar_url) + fallback to auth metadata
+          const { data: prof, error: profErr } = await supabase
+            .from("profiles")
+            .select("username, avatar_url")
+            .eq("id", u.id)
+            .single();
+
+          if (!mounted) return;
+
+          const uname = prof?.username ?? u.user_metadata?.username ?? "";
+          const contact = u.user_metadata?.contact_number ?? "";
+          const mail = u.email ?? "";
+
+          setUsername(uname || "");
+          setContactNumber(contact || "");
+          setEmail(mail || "");
         }
+      } catch (e) {
+        console.error("Profile load error:", e);
+        Alert.alert("Error", e?.message || "Failed to load profile.");
+      } finally {
+        if (mounted) setBusy(false);
       }
-      setLoading(false);
     };
 
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       if (!mounted) return;
-      const u = session?.user ?? null;
-      setUser(u);
+      setUser(session?.user ?? null);
     });
 
     load();
+
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe?.();
     };
   }, []);
 
   const handleSave = async () => {
     if (!user) return;
-    setLoading(true);
+
+    // Only username is saved in your current logic; keep it that way (no surprises)
+    if (!username.trim()) {
+      Alert.alert("Required", "Username cannot be empty.");
+      return;
+    }
+
+    setBusy(true);
     try {
-      const { error: profErr } = await supabase.from("profiles").upsert(
-        {
-          id: user.id,
-          username: username || null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "id" },
-      );
+      const { error: profErr } = await supabase
+        .from("profiles")
+        .upsert(
+          {
+            id: user.id,
+            username: username.trim(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        );
 
       if (profErr) throw profErr;
 
-      Alert.alert("Success", "Username updated successfully.");
+      Alert.alert("Saved", "Username updated successfully.");
       setEditing(false);
     } catch (e) {
       console.error("Update profile error:", e);
-      Alert.alert("Error", e.message || "Failed to update username.");
+      Alert.alert("Error", e?.message || "Failed to update username.");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -99,10 +128,7 @@ export default function ProfileScreen() {
 
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert(
-          "Permission needed",
-          "Please allow photo library access to upload an avatar.",
-        );
+        Alert.alert("Permission needed", "Please allow photo library access to upload an avatar.");
         return;
       }
 
@@ -112,6 +138,7 @@ export default function ProfileScreen() {
         aspect: [1, 1],
         quality: 0.9,
       });
+
       if (result.canceled) return;
 
       const uri = result.assets?.[0]?.uri;
@@ -120,8 +147,11 @@ export default function ProfileScreen() {
         return;
       }
 
+      setBusy(true);
+
       const resp = await fetch(uri);
       const arrayBuffer = await resp.arrayBuffer();
+
       const fileName = `${uuidv4()}.jpg`;
       const filePath = `avatars/${user.id}/${fileName}`;
 
@@ -129,6 +159,7 @@ export default function ProfileScreen() {
         .from("avatars")
         .upload(filePath, new Uint8Array(arrayBuffer), {
           contentType: "image/jpeg",
+          upsert: false,
         });
 
       if (uploadError) throw uploadError;
@@ -139,208 +170,435 @@ export default function ProfileScreen() {
 
       if (urlErr) throw urlErr;
 
-      const publicUrl = urlData.publicUrl;
+      const publicUrl = urlData?.publicUrl;
+      if (!publicUrl) throw new Error("Failed to generate public URL.");
 
       const { error: profErr } = await supabase
         .from("profiles")
-        .upsert({ id: user.id, avatar_url: publicUrl }, { onConflict: "id" });
+        .upsert({ id: user.id, avatar_url: publicUrl, updated_at: new Date().toISOString() }, { onConflict: "id" });
 
       if (profErr) throw profErr;
 
-      await supabase.auth.updateUser({
-        data: { avatar_url: publicUrl },
+      // keep auth metadata in sync
+      const { error: metaErr } = await supabase.auth.updateUser({
+        data: { ...user.user_metadata, avatar_url: publicUrl },
       });
+      if (metaErr) throw metaErr;
 
+      // update local user state
       setUser((prev) =>
         prev
-          ? {
-              ...prev,
-              user_metadata: { ...prev.user_metadata, avatar_url: publicUrl },
-            }
-          : prev,
+          ? { ...prev, user_metadata: { ...(prev.user_metadata || {}), avatar_url: publicUrl } }
+          : prev
       );
 
-      Alert.alert("Success", "Profile picture updated!");
+      Alert.alert("Success", "Profile picture updated.");
     } catch (e) {
       console.error("Avatar upload error:", e);
-      Alert.alert("Error", e.message || "Failed to upload image.");
+      Alert.alert("Error", e?.message || "Failed to upload image.");
+    } finally {
+      setBusy(false);
     }
   };
 
-  if (loading) {
+  const confirmSignOut = () => {
+    Alert.alert("Sign out?", "You will be logged out of your account.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setBusy(true);
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+          } catch (e) {
+            Alert.alert("Error", e?.message || "Failed to sign out.");
+          } finally {
+            setBusy(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  if (busy && !user) {
     return (
-      <View style={[styles.container, { justifyContent: "center" }]}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={[styles.screen, styles.center]}>
+        <ActivityIndicator size="large" color="#2563EB" />
       </View>
     );
   }
 
   if (!user) {
     return (
-      <View style={[styles.container, { justifyContent: "center" }]}>
-        <Text>No user logged in</Text>
+      <View style={[styles.screen, styles.center]}>
+        <Ionicons name="person-circle-outline" size={56} color="#94A3B8" />
+        <Text style={styles.emptyTitle}>No user logged in</Text>
+        <Text style={styles.emptySub}>Please sign in to view your profile.</Text>
       </View>
     );
   }
 
-  const avatarUri =
-    user.user_metadata?.avatar_url || "https://placekitten.com/200/200";
-
   return (
-    <View style={styles.container}>
-      <View style={styles.profileContainer}>
-        <Image source={{ uri: avatarUri }} style={styles.profileImage} />
-        <TouchableOpacity
-          style={styles.cameraIcon}
-          onPress={handleAvatarUpload}
-        >
-          <Ionicons name="camera" size={20} color="#fff" />
-        </TouchableOpacity>
-      </View>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-      <View style={styles.infoCard}>
-        <View style={styles.row}>
-          <Ionicons name="person-circle" size={22} color="#333" />
-          <Text style={styles.label}>Username</Text>
+        {/* Avatar Card */}
+        <View style={styles.avatarCard}>
+          <View style={styles.avatarWrap}>
+            <Image source={{ uri: avatarUri }} style={styles.avatar} />
+            <TouchableOpacity activeOpacity={0.9} style={styles.avatarAction} onPress={handleAvatarUpload}>
+              <Ionicons name="camera" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.nameText}>{username || "Unnamed User"}</Text>
+            <Text style={styles.metaText}>{email || "No email"}</Text>
+
+            <View style={styles.chipRow}>
+              <View style={styles.chip}>
+                <Ionicons name="call-outline" size={14} color="#334155" />
+                <Text style={styles.chipText}>{contactNumber || "No contact"}</Text>
+              </View>
+            </View>
+          </View>
         </View>
-        {editing ? (
-          <TextInput
-            style={styles.input}
+
+        {/* Details Card */}
+        <View style={styles.card}>
+          <View style={styles.cardTopRow}>
+            <Text style={styles.cardTitle}>Account details</Text>
+
+            {!editing ? (
+              <TouchableOpacity activeOpacity={0.9} onPress={() => setEditing(true)} style={styles.editPill}>
+                <Ionicons name="pencil" size={16} color="#FFFFFF" />
+                <Text style={styles.editPillText}>Edit</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.editPillGhost}>
+                <Ionicons name="create-outline" size={16} color="#334155" />
+                <Text style={styles.editPillGhostText}>Editing</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Username */}
+          <Field
+            icon="person-outline"
+            label="Username"
             value={username}
+            editing={editing}
             onChangeText={setUsername}
+            placeholder="Enter username"
           />
-        ) : (
-          <Text style={styles.value}>{username || "No username"}</Text>
-        )}
 
-        <View style={styles.row}>
-          <Ionicons name="call" size={22} color="#333" />
-          <Text style={styles.label}>Contact Number</Text>
-        </View>
-        {editing ? (
-          <TextInput
-            style={styles.input}
+          {/* Contact Number (display only, editable UI allowed but not saved to DB in this code) */}
+          <Field
+            icon="call-outline"
+            label="Contact Number"
             value={contactNumber}
+            editing={editing}
             onChangeText={setContactNumber}
+            placeholder="Enter contact number"
             keyboardType="phone-pad"
           />
-        ) : (
-          <Text style={styles.value}>{contactNumber || "N/A"}</Text>
-        )}
 
-        <View style={styles.row}>
-          <Ionicons name="mail" size={22} color="#333" />
-          <Text style={styles.label}>Email Address</Text>
-        </View>
-        {editing ? (
-          <TextInput
-            style={styles.input}
+          {/* Email (display only, editing UI allowed but not saved) */}
+          <Field
+            icon="mail-outline"
+            label="Email Address"
             value={email}
+            editing={editing}
             onChangeText={setEmail}
+            placeholder="Enter email"
             keyboardType="email-address"
             autoCapitalize="none"
           />
-        ) : (
-          <Text style={styles.value}>{email}</Text>
-        )}
 
-        {editing ? (
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-              <Ionicons name="checkmark" size={20} color="#fff" />
-              <Text style={styles.saveText}>Save</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setEditing(false)}
-            >
-              <Ionicons name="close" size={20} color="#fff" />
-              <Text style={styles.saveText}>Cancel</Text>
-            </TouchableOpacity>
+          {editing && (
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.actionBtn, styles.actionGhost]}
+                onPress={() => {
+                  // revert basic fields to current user values (safe)
+                  setUsername(user?.user_metadata?.username || username);
+                  setEmail(user?.email || email);
+                  setContactNumber(user?.user_metadata?.contact_number || contactNumber);
+                  setEditing(false);
+                }}
+                disabled={busy}
+              >
+                <Text style={styles.actionGhostText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.actionBtn, styles.actionPrimary]}
+                onPress={handleSave}
+                disabled={busy}
+              >
+                {busy ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                    <Text style={styles.actionPrimaryText}>Save</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {/* Busy overlay (when user exists) */}
+        {busy && (
+          <View style={styles.busyOverlay} pointerEvents="none">
+            <ActivityIndicator size="small" color="#2563EB" />
           </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => setEditing(true)}
-          >
-            <Ionicons name="pencil" size={20} color="#fff" />
-          </TouchableOpacity>
         )}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+/* ======= small reusable field (same file, no extra components) ======= */
+function Field({
+  icon,
+  label,
+  value,
+  editing,
+  onChangeText,
+  placeholder,
+  keyboardType,
+  autoCapitalize,
+}) {
+  return (
+    <View style={styles.field}>
+      <View style={styles.fieldTop}>
+        <View style={styles.fieldLabelRow}>
+          <Ionicons name={icon} size={18} color="#334155" />
+          <Text style={styles.fieldLabel}>{label}</Text>
+        </View>
       </View>
+
+      {editing ? (
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          style={styles.input}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+        />
+      ) : (
+        <Text style={styles.fieldValue}>{value || "—"}</Text>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
+  screen: { flex: 1, backgroundColor: "#F6F7FB" },
+  content: { padding: 16, paddingBottom: 26 },
+  center: { alignItems: "center", justifyContent: "center" },
+
+  /* empty */
+  emptyTitle: { marginTop: 10, fontSize: 16, fontWeight: "900", color: "#0F172A" },
+  emptySub: { marginTop: 6, fontSize: 13, color: "#64748B", fontWeight: "600" },
+
+  /* header */
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  h1: { fontSize: 28, fontWeight: "900", color: "#0F172A", letterSpacing: 0.2 },
+  h2: { marginTop: 6, fontSize: 13, lineHeight: 18, color: "#64748B", fontWeight: "600" },
+
+  signOutBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
     alignItems: "center",
-    paddingTop: 40,
+    justifyContent: "center",
+    elevation: 2,
   },
-  profileContainer: { alignItems: "center", marginBottom: 20 },
-  profileImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#eee",
+
+  /* avatar card */
+  avatarCard: {
+    flexDirection: "row",
+    gap: 14,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+    marginBottom: 12,
+    alignItems: "center",
   },
-  cameraIcon: {
+  avatarWrap: { width: 86, height: 86, borderRadius: 28, position: "relative" },
+  avatar: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 28,
+    backgroundColor: "#E2E8F0",
+  },
+  avatarAction: {
     position: "absolute",
-    bottom: 5,
-    right: 10,
-    backgroundColor: "#333",
-    borderRadius: 20,
-    padding: 5,
+    right: -6,
+    bottom: -6,
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    elevation: 2,
   },
-  infoCard: {
-    backgroundColor: "#C7EDC7",
-    width: "85%",
-    borderRadius: 12,
-    padding: 20,
+  nameText: { fontSize: 16, fontWeight: "900", color: "#0F172A" },
+  metaText: { marginTop: 4, fontSize: 12.5, color: "#64748B", fontWeight: "600" },
+
+  chipRow: { marginTop: 10, flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+  },
+  chipText: { fontSize: 12.5, fontWeight: "800", color: "#334155" },
+
+  /* details card */
+  card: {
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
     position: "relative",
   },
-  row: { flexDirection: "row", alignItems: "center", marginTop: 12 },
-  label: { marginLeft: 8, fontWeight: "600", fontSize: 14, color: "#333" },
-  value: { marginLeft: 30, fontSize: 15, color: "#000" },
+  cardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  cardTitle: { fontSize: 14.5, fontWeight: "900", color: "#0F172A" },
+
+  editPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "#0F172A",
+  },
+  editPillText: { color: "#FFFFFF", fontWeight: "900", fontSize: 12.5, letterSpacing: 0.2 },
+
+  editPillGhost: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+  },
+  editPillGhostText: { color: "#334155", fontWeight: "900", fontSize: 12.5 },
+
+  field: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+  },
+  fieldTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  fieldLabelRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  fieldLabel: { fontSize: 12.5, fontWeight: "900", color: "#334155" },
+  fieldValue: { marginTop: 8, fontSize: 14, fontWeight: "800", color: "#0F172A" },
+
   input: {
-    marginLeft: 30,
-    fontSize: 15,
-    color: "#000",
-    borderBottomWidth: 1,
-    borderBottomColor: "#666",
-    paddingVertical: 2,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.10)",
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
   },
-  editButton: {
-    position: "absolute",
-    bottom: 15,
-    right: 15,
-    backgroundColor: "#3B82F6",
-    padding: 10,
-    borderRadius: 30,
-    elevation: 3,
-  },
-  buttonRow: {
+
+  actionsRow: {
+    marginTop: 14,
     flexDirection: "row",
+    gap: 10,
     justifyContent: "flex-end",
-    marginTop: 20,
   },
-  saveButton: {
-    flexDirection: "row",
+  actionBtn: {
+    height: 44,
+    borderRadius: 14,
+    paddingHorizontal: 14,
     alignItems: "center",
-    backgroundColor: "#4CAF50",
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    marginRight: 10,
-  },
-  cancelButton: {
+    justifyContent: "center",
     flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F44336",
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
+    gap: 8,
   },
-  saveText: { color: "#fff", marginLeft: 5, fontWeight: "600" },
+  actionGhost: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.10)",
+  },
+  actionGhostText: { fontSize: 13, fontWeight: "900", color: "#0F172A" },
+
+  actionPrimary: { backgroundColor: "#2563EB" },
+  actionPrimaryText: { fontSize: 13, fontWeight: "900", color: "#FFFFFF" },
+
+  busyOverlay: {
+    position: "absolute",
+    right: 16,
+    top: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

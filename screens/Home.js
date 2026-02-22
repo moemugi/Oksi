@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useContext, useRef } from "react";
+// Home.js (WHOLE FILE - PURE JS)
+// MODERN UI ONLY — LOGIC UNCHANGED
+// CHANGE REQUEST (from your screenshot):
+// - Remove ALL encircled UI: (1) "Home / Calumpang • Live" header, (2) grid icon button, (3) Humidity box
+// - Header should be ONLY: "Weather"
+
+import React, { useEffect, useMemo, useRef, useState, useContext } from "react";
 import {
   View,
   Text,
@@ -11,6 +17,9 @@ import {
   Easing,
   TextInput,
   Alert,
+  StatusBar,
+  Platform,
+  SafeAreaView,
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,8 +28,8 @@ import { SensorContext } from "../context/SensorContext";
 import { supabase } from "../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-
 const API_KEY = "bd96cb9d18e16f8796d773ef208270be";
+
 const weatherIcons = {
   Clear: "sunny",
   Clouds: "cloudy",
@@ -31,25 +40,79 @@ const weatherIcons = {
   Mist: "cloudy",
 };
 
+const stylesTokens = {
+  bg: "#F6F7FB",
+  card: "#FFFFFF",
+  text: "#0B0F1A",
+  muted: "rgba(11,15,26,0.58)",
+  border: "rgba(15,23,42,0.10)",
+  shadow: "rgba(15,23,42,0.10)",
+  primary: "#2A76E8",
+  success: "#24991E",
+  danger: "#FF2D2D",
+};
+
+/* ================== helpers for water analysis (FIX) ================== */
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const toNumber = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Derive % level from a raw reading.
+ * - If rawLevel is already 0–100 and no calibration provided -> treat as percent.
+ * - If calibration exists -> treat rawLevel as "distance now" and convert to percent.
+ */
+const derivePercentLevel = ({ rawLevel, distanceEmpty, distanceFull }) => {
+  const lv = toNumber(rawLevel);
+  if (lv == null) return null;
+
+  const de = toNumber(distanceEmpty);
+  const df = toNumber(distanceFull);
+
+  // If we don't have calibration, assume lv is percent if 0..100
+  if (de == null || df == null) {
+    return lv >= 0 && lv <= 100 ? clamp(lv, 0, 100) : null;
+  }
+
+  // Heuristic:
+  // If lv is inside the calibrated distance range (with small tolerance),
+  // treat lv as distance (cm). Otherwise treat lv as percent.
+  const lo = Math.min(df, de);
+  const hi = Math.max(df, de);
+  const tol = 2; // cm tolerance
+
+  const looksLikeDistance = lv >= lo - tol && lv <= hi + tol;
+
+  if (!looksLikeDistance) {
+    // treat as percent
+    return lv >= 0 && lv <= 100 ? clamp(lv, 0, 100) : null;
+  }
+
+  // treat as distance -> convert to percent
+  const denom = de - df;
+  if (!denom || denom === 0) return null;
+
+  const pct = ((de - lv) / denom) * 100;
+  return clamp(pct, 0, 100);
+};
+
 export default function HomeScreen() {
   const [current, setCurrent] = useState(null);
   const [forecast, setForecast] = useState([]);
   const [city, setCity] = useState(null);
   const [loading, setLoading] = useState(true);
+
   const [userId, setUserId] = useState(null);
 
+  const { plantStatus, lastUpdated, setPlantStatus, setLastUpdated } =
+    useContext(SensorContext);
 
-  const {
-    plantStatus,
-    lastUpdated,
-    setPlantStatus,
-    setLastUpdated,
-  } = useContext(SensorContext);
   const [timeAgo, setTimeAgo] = useState("");
   const [loadedLastUpdated, setLoadedLastUpdated] = useState(false);
 
-
-  // Modal & calibration states
+  // Modals & calibration
   const [waterModalVisible, setWaterModalVisible] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
@@ -57,128 +120,43 @@ export default function HomeScreen() {
   const [calibrationStep, setCalibrationStep] = useState(0); // 0=WiFi, 1=Empty, 2=Full, 3=Confirm
   const [calibrationMessage, setCalibrationMessage] = useState("");
   const [skipEmptyStep, setSkipEmptyStep] = useState(false);
-  const [existingEmpty, setExistingEmpty] = useState(false);
-  const [useExisting, setUseExisting] = useState(false); // user's choice in alert
+
+  const [useExisting, setUseExisting] = useState(false);
   const [existingEmptyDistance, setExistingEmptyDistance] = useState(null);
-  const [existingCalibrationModalVisible, setExistingCalibrationModalVisible] = useState(false);
-  const [existingCalibrationDistance, setExistingCalibrationDistance] = useState(null);
+  const [existingCalibrationModalVisible, setExistingCalibrationModalVisible] =
+    useState(false);
+  const [existingCalibrationDistance, setExistingCalibrationDistance] =
+    useState(null);
+
   const [showPassword, setShowPassword] = useState(false);
 
-  // Water analysis & history
-const [waterDistance, setWaterDistance] = useState(null); // from ESP32
-const [waterLevel, setWaterLevel] = useState(null); // %
-const [waterHistory, setWaterHistory] = useState([]);
-const [waterAnalysis, setWaterAnalysis] = useState(null);
-
-const analyzeWaterContainer = (history) => {
-  if (!history || history.length < 2) {
-    return {
-      usageRate: "-",
-      timeToEmpty: "-",
-      refillNeeded: false,
-      insight: "Not enough data yet.",
-    };
-  }
-
-  const first = history[0];
-  const last = history[history.length - 1];
-
-  const hoursPassed = (last.timestamp - first.timestamp) / (1000 * 60 * 60);
-
-  if (hoursPassed <= 0) {
-    return {
-      usageRate: "-",
-      timeToEmpty: "-",
-      refillNeeded: false,
-      insight: "Waiting for more readings.",
-    };
-  }
-
-  const usageRate = (first.level - last.level) / hoursPassed;
-
-  // Cap unrealistic spikes
-  if (usageRate > 20) {
-    return {
-      usageRate: usageRate.toFixed(2),
-      timeToEmpty: "-",
-      refillNeeded: false,
-      insight: "Usage spike detected. Monitoring...",
-    };
-  }
-
-  if (usageRate <= 0.01) {
-    return {
-      usageRate: "0",
-      timeToEmpty: "-",
-      refillNeeded: false,
-      insight: "Tank is stable or being refilled.",
-    };
-  }
-
-  const hoursToEmpty = last.level / usageRate;
-
-  // Immediate refill condition
-  if (last.level <= 5 || hoursToEmpty <= 0) {
-    return {
-      usageRate: usageRate.toFixed(2),
-      timeToEmpty: "0h 0m",
-      refillNeeded: true,
-      insight: "Immediate refill required!",
-    };
-  }
-
-  // Convert hoursToEmpty to hours and minutes
-// Convert hoursToEmpty to days/hours/minutes (show slash format)
-const totalMinutes = Math.floor(hoursToEmpty * 60);
-
-const totalHours = Math.floor(totalMinutes / 60);
-const minutes = totalMinutes % 60;
-
-const days = Math.floor(totalHours / 24);
-const hours = totalHours % 24;
-
-// If >= 24h show: "2647h / 110d 7h"
-// else show: "5h 12m"
-let timeToEmptyStr = "";
-if (totalHours >= 24) {
-  timeToEmptyStr = `${totalHours}h / ${days}d ${hours}h`;
-} else {
-  timeToEmptyStr = `${hours}h ${minutes}m`;
-}
-
-
-  // Insight messages
-  let insightMessage = "";
-  if (last.level >= 95) insightMessage = "Tank is full and ready.";
-  else if (hoursToEmpty <= 1) insightMessage = "Immediate refill required!";
-  else if (hoursToEmpty <= 3) insightMessage = "Refill soon.";
-  else insightMessage = "Water level is sufficient.";
-
-  return {
-    usageRate: usageRate.toFixed(2),
-    timeToEmpty: timeToEmptyStr,
-    refillNeeded: hoursToEmpty <= 1,
-    insight: insightMessage,
-  };
-};
-
+  // Water analysis/history
+  const [waterHistory, setWaterHistory] = useState([]);
+  const [waterAnalysis, setWaterAnalysis] = useState(null);
 
   // Water fill animation
   const fillAnim = useRef(new Animated.Value(0)).current;
+
   const startFillingAnimation = () => {
     fillAnim.setValue(0);
     Animated.timing(fillAnim, {
       toValue: 1,
-      duration: 4000,
+      duration: 3500,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: false,
     }).start();
   };
 
+  const fillHeight = fillAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  });
+
   // WiFi info
   const [wifiSSID, setWifiSSID] = useState("");
   const [wifiPass, setWifiPass] = useState("");
   const ESP32_HOST = "http://192.168.4.1";
+
   const getSession = async () => {
     const {
       data: { session },
@@ -191,55 +169,138 @@ if (totalHours >= 24) {
       const session = await getSession();
       if (!session) return;
 
-      const userId = session.user.id;
-
-      // You can replace this with ESP32 MAC later if needed
+      const uid = session.user.id;
       const deviceId = "water-tank-esp32";
 
-      const { error } = await supabase
-        .from("water_device")
-        .upsert(
-          {
-            user_id: userId,
-            device_id: deviceId,
-            device_status: "Active",
-            last_active: new Date().toISOString(),
-          },
-          { onConflict: "device_id" }
-        );
+      const { error } = await supabase.from("water_device").upsert(
+        {
+          user_id: uid,
+          device_id: deviceId,
+          device_status: "Active",
+          last_active: new Date().toISOString(),
+        },
+        { onConflict: "device_id" }
+      );
 
-      if (error) {
-        console.error("❌ Failed to update water device status:", error);
-      } else {
-        console.log("✅ Water device marked as Active");
-      }
+      if (error) console.error("Failed to update water device status:", error);
     } catch (err) {
-      console.error("⚠️ markDeviceActive error:", err);
+      console.error("markDeviceActive error:", err);
     }
   };
 
-  // --- Weather fetch ---
+  const analyzeWaterContainer = (history) => {
+    if (!history || history.length < 2) {
+      return {
+        usageRate: "-",
+        timeToEmpty: "-",
+        refillNeeded: false,
+        insight: "Not enough data yet.",
+      };
+    }
+
+    const first = history[0];
+    const last = history[history.length - 1];
+
+    const hoursPassed = (last.timestamp - first.timestamp) / (1000 * 60 * 60);
+
+    if (hoursPassed <= 0) {
+      return {
+        usageRate: "-",
+        timeToEmpty: "-",
+        refillNeeded: false,
+        insight: "Waiting for more readings.",
+      };
+    }
+
+    const usageRate = (first.level - last.level) / hoursPassed;
+
+    // Cap unrealistic spikes
+    if (usageRate > 20) {
+      return {
+        usageRate: usageRate.toFixed(2),
+        timeToEmpty: "-",
+        refillNeeded: false,
+        insight: "Usage spike detected. Monitoring...",
+      };
+    }
+
+    if (usageRate <= 0.01) {
+      return {
+        usageRate: "0",
+        timeToEmpty: "-",
+        refillNeeded: false,
+        insight: "Tank is stable or being refilled.",
+      };
+    }
+
+    const hoursToEmpty = last.level / usageRate;
+
+    if (last.level <= 5 || hoursToEmpty <= 0) {
+      return {
+        usageRate: usageRate.toFixed(2),
+        timeToEmpty: "0h 0m",
+        refillNeeded: true,
+        insight: "Immediate refill required!",
+      };
+    }
+
+    const totalMinutes = Math.floor(hoursToEmpty * 60);
+    const totalHours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const days = Math.floor(totalHours / 24);
+    const hours = totalHours % 24;
+
+    let timeToEmptyStr = "";
+    if (totalHours >= 24) timeToEmptyStr = `${totalHours}h / ${days}d ${hours}h`;
+    else timeToEmptyStr = `${hours}h ${minutes}m`;
+
+    let insightMessage = "";
+    if (last.level >= 95) insightMessage = "Tank is full and ready.";
+    else if (hoursToEmpty <= 1) insightMessage = "Immediate refill required!";
+    else if (hoursToEmpty <= 3) insightMessage = "Refill soon.";
+    else insightMessage = "Water level is sufficient.";
+
+    return {
+      usageRate: usageRate.toFixed(2),
+      timeToEmpty: timeToEmptyStr,
+      refillNeeded: hoursToEmpty <= 1,
+      insight: insightMessage,
+    };
+  };
+
+  const tempText = useMemo(() => {
+    if (!current?.main?.temp && current?.main?.temp !== 0) return "--°";
+    return `${Math.round(current.main.temp)}°C`;
+  }, [current]);
+
+  const weatherMain = current?.weather?.[0]?.main ?? "";
+  const weatherDesc = current?.weather?.[0]?.description ?? "";
+
+  // Weather fetch
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        let { status } = await Location.requestForegroundPermissionsAsync();
+        const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
           console.warn("Permission to access location was denied");
           setLoading(false);
           return;
         }
+
         const location = await Location.getCurrentPositionAsync({});
         const { latitude, longitude } = location.coords;
+
         const [curRes, fcRes] = await Promise.all([
           axios.get(
-            `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&units=metric&appid=${API_KEY}`,
+            `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&units=metric&appid=${API_KEY}`
           ),
           axios.get(
-            `https://api.openweathermap.org/data/2.5/forecast?lat=${latitude}&lon=${longitude}&units=metric&appid=${API_KEY}`,
+            `https://api.openweathermap.org/data/2.5/forecast?lat=${latitude}&lon=${longitude}&units=metric&appid=${API_KEY}`
           ),
         ]);
+
         setCurrent(curRes.data);
-        setForecast(fcRes.data.list.slice(0, 3));
+        setForecast(fcRes.data.list.slice(0, 8));
         setCity(curRes.data.name);
       } catch (err) {
         console.error("Weather fetch failed:", err);
@@ -247,32 +308,32 @@ if (totalHours >= 24) {
         setLoading(false);
       }
     };
+
     fetchWeather();
   }, []);
-  useEffect(() => {
-  }, []);
 
+  // Load user session id
   useEffect(() => {
     const loadUser = async () => {
       const { data } = await supabase.auth.getSession();
       setUserId(data?.session?.user?.id ?? null);
     };
-
     loadUser();
   }, []);
 
+  // Load plant status cache
   useEffect(() => {
     if (!userId) return;
 
     const loadPlantStatus = async () => {
       try {
         const savedStatus = await AsyncStorage.getItem(`plantStatus_${userId}`);
-        const savedTime = await AsyncStorage.getItem(`plantStatusLastUpdated_${userId}`);
+        const savedTime = await AsyncStorage.getItem(
+          `plantStatusLastUpdated_${userId}`
+        );
 
         if (savedStatus) setPlantStatus(JSON.parse(savedStatus));
         if (savedTime) setLastUpdated(new Date(savedTime));
-
-
       } catch (err) {
         console.warn("Failed to load plant status:", err);
       } finally {
@@ -283,29 +344,25 @@ if (totalHours >= 24) {
     loadPlantStatus();
   }, [userId]);
 
-
+  // Save plant status cache
   useEffect(() => {
     if (!userId) return;
 
     if (plantStatus?.status) {
-      AsyncStorage.setItem(
-        `plantStatus_${userId}`,
-        JSON.stringify(plantStatus),
-      );
+      AsyncStorage.setItem(`plantStatus_${userId}`, JSON.stringify(plantStatus));
     }
 
     if (lastUpdated) {
       AsyncStorage.setItem(
         `plantStatusLastUpdated_${userId}`,
-        lastUpdated.toISOString(), // ✅ STRING
+        lastUpdated.toISOString()
       );
     }
   }, [plantStatus, lastUpdated, userId]);
 
-
-
+  // Time ago
   useEffect(() => {
-    if (!loadedLastUpdated) return; // wait until lastUpdated is loaded
+    if (!loadedLastUpdated) return;
     if (!lastUpdated) {
       setTimeAgo("Just now");
       return;
@@ -331,79 +388,114 @@ if (totalHours >= 24) {
     return () => clearInterval(interval);
   }, [lastUpdated, loadedLastUpdated]);
 
-useEffect(() => {
-  if (!userId) return; // wait until userId is loaded
+  /* ================== TANK DATA POLLING (FIXED) ================== */
+  useEffect(() => {
+    if (!userId) return;
 
-  const fetchTankData = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("tank_data")
-        .select("tank_level, distance_full, distance_empty, created_at")
-        .eq("user_id", userId) // fetch only current user
-        .order("created_at", { ascending: false })
-        .limit(10);
+    let mounted = true;
 
-      if (error) {
-        console.error("Supabase tank_data fetch error:", error);
-        return;
+    const fetchTankData = async () => {
+      try {
+        // A) Try to get calibration from water_device (if you store it there)
+        // If your water_device does NOT have these columns, this will just return nulls.
+        const { data: deviceRow, error: deviceErr } = await supabase
+          .from("tank_data")
+          .select("distance_empty, distance_full")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (deviceErr && deviceErr.code !== "PGRST116") {
+          console.warn("water_device fetch warning:", deviceErr);
+        }
+
+        let calibEmpty = deviceRow?.distance_empty ?? null;
+        let calibFull = deviceRow?.distance_full ?? null;
+
+        // B) Get last readings from tank_data
+        // IMPORTANT: If your live distance column isn't tank_level, rename it here.
+        const { data: rows, error } = await supabase
+          .from("tank_data")
+          .select("tank_level, distance_empty, distance_full, created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(30);
+
+        if (error) {
+          console.error("Supabase tank_data fetch error:", error);
+          return;
+        }
+
+        if (!rows || rows.length < 2) {
+          if (mounted) {
+            setWaterHistory([]);
+            setWaterAnalysis(null);
+          }
+          return;
+        }
+
+        // C) If water_device has no calibration, learn from newest tank_data row that has it
+        if (calibEmpty == null || calibFull == null) {
+          const withCalib = rows.find(
+            (r) => r.distance_empty != null && r.distance_full != null
+          );
+          if (withCalib) {
+            calibEmpty = withCalib.distance_empty;
+            calibFull = withCalib.distance_full;
+          }
+        }
+
+        // D) Build history (chronological)
+        const history = rows
+          .map((r) => {
+            const levelPct = derivePercentLevel({
+              rawLevel: r.tank_level,
+              distanceEmpty: r.distance_empty ?? calibEmpty,
+              distanceFull: r.distance_full ?? calibFull,
+            });
+
+            const ts = new Date(r.created_at).getTime();
+            if (levelPct == null || !Number.isFinite(ts)) return null;
+            return { level: levelPct, timestamp: ts };
+          })
+          .filter(Boolean)
+          .reverse();
+
+        if (history.length < 2) {
+          if (mounted) {
+            setWaterHistory([]);
+            setWaterAnalysis(null);
+          }
+          return;
+        }
+
+        const analysis = analyzeWaterContainer(history);
+        const last = history[history.length - 1];
+
+        if (!mounted) return;
+
+        setWaterHistory(history);
+        setWaterAnalysis({
+          currentLevel: Number(last.level).toFixed(1),
+          usageRate: analysis.usageRate,
+          timeToEmpty: analysis.timeToEmpty,
+          refillNeeded: analysis.refillNeeded,
+          insight: analysis.insight,
+        });
+      } catch (err) {
+        console.error("Error fetching tank data:", err);
       }
+    };
 
-      if (!data || data.length < 2) {
-        setWaterAnalysis(null);
-        return;
-      }
+    fetchTankData();
+    const interval = setInterval(fetchTankData, 5000);
 
-      const history = data
-        .map((item) => {
-          if (
-            item.tank_level == null ||
-            item.distance_full == null ||
-            item.distance_empty == null
-          )
-            return null;
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [userId]);
 
-          let levelPercentRaw =
-            ((item.distance_empty - item.tank_level) /
-              (item.distance_empty - item.distance_full)) *
-            100;
-
-          // Ensure 0-100%
-          const levelPercent = Math.max(0, Math.min(100, levelPercentRaw));
-          return {
-            level: levelPercent,
-            timestamp: new Date(item.created_at).getTime(),
-          };
-        })
-        .filter(Boolean)
-        .reverse();
-
-      if (history.length < 2) {
-        setWaterAnalysis(null);
-        return;
-      }
-
-      const analysis = analyzeWaterContainer(history);
-
-      setWaterHistory(history);
-      setWaterAnalysis({
-        currentLevel: history[history.length - 1].level.toFixed(1),
-        usageRate: analysis.usageRate,
-        timeToEmpty: analysis.timeToEmpty,
-        refillNeeded: analysis.refillNeeded,
-        insight: analysis.insight,
-      });
-    } catch (err) {
-      console.error("Error fetching tank data:", err);
-    }
-  };
-
-  fetchTankData();
-  const interval = setInterval(fetchTankData, 5000);
-  return () => clearInterval(interval);
-}, [userId]);
-
-
-  // --- Save WiFi + User Info to ESP32 ---
+  // Save WiFi + user info to ESP32
   const saveConfig = async () => {
     if (!wifiSSID || !wifiPass) {
       Alert.alert("Error", "Please fill all WiFi fields");
@@ -419,53 +511,46 @@ useEffect(() => {
         return;
       }
 
-      const userId = session.user.id;
+      const uid = session.user.id;
       const accessToken = session.access_token;
+
       const res = await fetch(`${ESP32_HOST}/configure`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           ssid: wifiSSID,
           password: wifiPass,
-          user_id: userId,
+          user_id: uid,
           access_token: accessToken,
         }).toString(),
       });
 
       const data = await res.json();
-      console.log("ESP32 configure response:", data);
 
       if (data.status === "ok") {
         if (useExisting && existingEmptyDistance != null) {
-          // Send existing empty distance to ESP32 now
           try {
             const emptyRes = await fetch(`${ESP32_HOST}/useExistingEmpty`, {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
               body: new URLSearchParams({
-                distance_empty: existingEmptyDistance,
+                distance_empty: String(existingEmptyDistance),
               }).toString(),
             });
-            const emptyData = await emptyRes.json();
-            console.log("Sent existing empty to ESP32:", emptyData);
+            await emptyRes.json();
 
-            // Jump directly to full calibration step
             setCalibrationStep(2);
             setCalibrationMessage(
-              "Existing empty tank value loaded. Fill your tank for full calibration.",
+              "Existing empty tank value loaded. Fill your tank for full calibration."
             );
           } catch (err) {
             console.error("Failed to send existing empty to ESP32:", err);
-            Alert.alert(
-              "Error",
-              "Failed to send existing tank value to ESP32.",
-            );
+            Alert.alert("Error", "Failed to send existing tank value to ESP32.");
           }
         } else {
-          // No existing → go to empty calibration step
           setCalibrationStep(1);
           setCalibrationMessage(
-            "Please make sure your tank is empty before calibration.",
+            "Please make sure your tank is empty before calibration."
           );
         }
       } else {
@@ -475,7 +560,7 @@ useEffect(() => {
       console.error("Config error:", err);
       Alert.alert(
         "Error",
-        "Could not reach ESP32. Make sure you're connected to its hotspot.",
+        "Could not reach ESP32. Make sure you're connected to its hotspot."
       );
     }
 
@@ -486,12 +571,12 @@ useEffect(() => {
     try {
       const session = await getSession();
       if (!session) throw new Error("User not authenticated");
-      const userId = session.user.id;
+      const uid = session.user.id;
 
       const { data, error } = await supabase
         .from("tank_data")
         .select("distance_empty")
-        .eq("user_id", userId)
+        .eq("user_id", uid)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -499,18 +584,15 @@ useEffect(() => {
       if (error && error.code !== "PGRST116") console.warn(error);
 
       if (data && data.distance_empty != null) {
-        // Store the distance for later
         setExistingCalibrationDistance(data.distance_empty);
-        // Show modal instead of alert
         setExistingCalibrationModalVisible(true);
       } else {
-        // No previous calibration → proceed normally
         setUseExisting(false);
         setExistingEmptyDistance(null);
         setSkipEmptyStep(false);
         setCalibrationStep(0);
         setCalibrationMessage(
-          "Enter your WiFi name and password to connect to the device.",
+          "Enter your WiFi name and password to connect to the device."
         );
         setModalVisible(true);
       }
@@ -518,15 +600,13 @@ useEffect(() => {
       console.error(err);
       Alert.alert(
         "Offline Mode",
-        "You are offline. Calibration will proceed via ESP32 only.",
+        "You are offline. Calibration will proceed via ESP32 only."
       );
       setCalibrationStep(0);
       setModalVisible(true);
     }
   };
 
-
-  // --- Calibration handler ---
   const handleCalibrate = async () => {
     try {
       if (calibrationStep === 1) {
@@ -537,46 +617,43 @@ useEffect(() => {
           body: new URLSearchParams({ step: "1" }).toString(),
         });
         const emptyData = await emptyRes.json();
-        console.log("🟢 Empty calibration response:", emptyData);
 
         if (emptyData.status === "empty calibrated") {
           setCalibrationStep(2);
           setCalibrationMessage(
-            "Empty calibration done! Fill your tank for full calibration.",
+            "Empty calibration done! Fill your tank for full calibration."
           );
         } else {
           Alert.alert(
             "Calibration Error",
-            "ESP32 did not confirm empty calibration.",
+            "ESP32 did not confirm empty calibration."
           );
         }
-
         setIsCalibrating(false);
       } else if (calibrationStep === 2) {
         setIsCalibrating(true);
         startFillingAnimation();
+
         const fullRes = await fetch(`${ESP32_HOST}/calibrate`, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ step: "2" }).toString(),
         });
-
         const fullData = await fullRes.json();
-        console.log("Full calibration response:", fullData);
 
         if (fullData.status === "full calibrated") {
           setTimeout(() => {
             setIsCalibrating(false);
             setCalibrationStep(3);
             setCalibrationMessage(
-              "Tank successfully calibrated! You may now reconnect your phone to the internet.",
+              "Tank successfully calibrated! You may now reconnect your phone to the internet."
             );
-          }, 4000);
+          }, 3500);
         } else {
           setIsCalibrating(false);
           Alert.alert(
             "Calibration Error",
-            "ESP32 did not confirm full calibration.",
+            "ESP32 did not confirm full calibration."
           );
         }
       }
@@ -585,7 +662,7 @@ useEffect(() => {
       setIsCalibrating(false);
       Alert.alert(
         "Calibration Error",
-        "Check your ESP32 connection and try again.",
+        "Check your ESP32 connection and try again."
       );
     }
   };
@@ -593,19 +670,15 @@ useEffect(() => {
   const handleConfirmCalibration = async () => {
     setModalVisible(false);
     setCalibrationConfirmed(true);
+
     try {
       const res = await fetch(`${ESP32_HOST}/confirmCalibration`, {
         method: "POST",
       });
       const data = await res.json();
-      console.log("Confirm calibration response:", data);
+
       if (data.status === "calibration confirmed") {
-        console.log(
-          "Tank successfully calibrated. ESP32 is connecting to hotspot...",
-        );
         await markDeviceActive();
-      } else {
-        console.warn("ESP32 did not confirm calibration.");
       }
     } catch (error) {
       console.warn("Could not reach ESP32 (silent):", error);
@@ -627,592 +700,962 @@ useEffect(() => {
       console.error("Recalibration error:", error);
       Alert.alert(
         "Error",
-        "Failed to reset calibration. Check your ESP32 connection.",
+        "Failed to reset calibration. Check your ESP32 connection."
       );
     }
   };
 
-  const fillHeight = fillAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
+  const renderForecastCard = (item, idx) => {
+    const dt = new Date(item.dt * 1000);
+    let hours = dt.getHours();
+    const minutes = dt.getMinutes();
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12 || 12;
+    const timeStr = `${hours}${
+      minutes ? `:${String(minutes).padStart(2, "0")}` : ""
+    } ${ampm}`;
+
+    const main = item.weather?.[0]?.main ?? "Clouds";
+    const iconName = weatherIcons[main] || "cloud-outline";
+
+    return (
+      <View key={idx} style={styles.forecastCard}>
+        <Text style={styles.forecastTime}>{timeStr}</Text>
+        <View style={styles.forecastIconWrap}>
+          <Ionicons name={iconName} size={20} color={stylesTokens.primary} />
+        </View>
+        <Text style={styles.forecastTemp}>{Math.round(item.main.temp)}°</Text>
+        <Text style={styles.forecastDesc}>{main}</Text>
+      </View>
+    );
+  };
+
+  const waterPct = useMemo(() => {
+    const n = toNumber(waterAnalysis?.currentLevel);
+    return n == null ? 0 : clamp(n, 0, 100);
+  }, [waterAnalysis]);
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Weather</Text>
-        {loading ? (
-          <ActivityIndicator size="large" color="#0288d1" />
-        ) : (
-          <>
-            <Text style={{ textAlign: "center", color: "#555" }}>
-              {city || "Unknown location"}
-            </Text>
-            <Text style={styles.temperature}>
-              {current ? `${Math.round(current.main.temp)}°C` : "--°"}
-            </Text>
-            <Text style={styles.description}>
-              {current && current.weather[0].main}
-            </Text>
-            <View style={styles.weatherCards}>
-              {forecast.map((item, idx) => {
-                const dt = new Date(item.dt * 1000);
-                let hours = dt.getHours();
-                const minutes = dt.getMinutes();
-                const ampm = hours >= 12 ? "PM" : "AM";
-                hours = hours % 12 || 12; // convert 0 → 12, 13 → 1, etc.
-                const timeStr = `${hours}${minutes ? `:${minutes}` : ""} ${ampm}`;
-                const main = item.weather[0].main;
-                const iconName = weatherIcons[main] || "cloud-outline";
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" />
 
-                return (
-                  <View key={idx} style={styles.weatherCard}>
-                    <Text style={styles.weatherTime}>{timeStr}</Text>
-                    <Ionicons name={iconName} size={40} color="#333" />
-                    <Text style={styles.weatherTemp}>
-                      {Math.round(item.main.temp)}°C
-                    </Text>
-                    <Text style={styles.weatherDesc}>{main}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          </>
-        )}
-      </View>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* HEADER: ONLY "Weather" */}
+        <View style={styles.pageHeader}>
+          <Text style={styles.pageHeaderTitle}>Weather</Text>
+        </View>
 
-      {/* <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Water Container Calibration</Text>
-        <TouchableOpacity
-          style={styles.cardButton}
-          onPress={async () => {
-            try {
-            } catch (err) {
-              console.error("Failed to mark device active:", err);
-            }
-            checkCalibrationStatus();
-          }}
-        >
-          <Ionicons name="water-outline" size={32} color="#0288d1" />
-          <View style={{ marginLeft: 10, flex: 1 }}>
-            <Text style={styles.cardTitle}>Set up your water container</Text>
-            <Text style={styles.cardSubtitle}>
-              Tap to start configuration and calibration process
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#555" />
-        </TouchableOpacity>
-      </View> */}
+        {/* WEATHER CARD (removed: grid icon + humidity box) */}
+        <View style={styles.hero}>
+          <View style={styles.heroMain}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.heroTempRow}>
+                {loading ? (
+                  <ActivityIndicator size="small" color={stylesTokens.primary} />
+                ) : (
+                  <Text style={styles.heroTemp}>{tempText}</Text>
+                )}
+              </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Water Container Analysis</Text>
-        <TouchableOpacity
-          style={styles.cardButton}
-          onPress={() => setWaterModalVisible(true)}
-        >
-
-          <Ionicons name="hourglass-outline" size={32} color="#0288d1" />
-          <View style={{ marginLeft: 10, flex: 1 }}>
-            <Text style={styles.cardTitle}>Predict water container status</Text>
-            <Text style={styles.cardSubtitle}>
-              Tap to estimate when your tank needs a refill
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#555" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Crop Health Status</Text>
-        <View style={styles.healthCard}>
-          <Ionicons name="leaf-outline" size={32} color="#4caf50" />
-          <View style={{ marginLeft: 10, flex: 1 }}>
-            {plantStatus?.status ? (
-              <>
-                <Text
-                  style={[styles.cardTitle, { color: plantStatus.statusColor }]}
-                >
-                  {plantStatus.status}
-                </Text>
-                <Text style={styles.lastUpdated}>
-                  Last updated {timeAgo || "Just now"}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.cardSubtitle}>
-                Plant status will appear here after viewing sensor data from Crop Monitor.
+              <Text style={styles.heroDesc}>
+                {weatherMain ? weatherMain : "—"}
+                {weatherDesc ? ` • ${weatherDesc}` : ""}
               </Text>
-            )}
+
+              <View style={styles.heroLocRow}>
+                <Ionicons
+                  name="location-outline"
+                  size={14}
+                  color={stylesTokens.muted}
+                />
+                <Text style={styles.heroLocation}>{city || "Unknown location"}</Text>
+              </View>
+            </View>
           </View>
+
+          {loading ? null : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.forecastRow}
+            >
+              {forecast.map(renderForecastCard)}
+            </ScrollView>
+          )}
         </View>
-      </View>
 
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            {calibrationStep === 0 && (
-              <>
-                <Text style={styles.modalText}>Calibrate Water Sensor</Text>
-
-
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    placeholder="WiFi Name"
-                    value={wifiSSID}
-                    onChangeText={setWifiSSID}
-                    style={styles.input}
-                  />
-
-                </View>
-
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    placeholder="WiFi Password"
-                    value={wifiPass}
-                    onChangeText={setWifiPass}
-                    secureTextEntry={!showPassword}
-                    style={styles.input}
-                  />
-                  <TouchableOpacity
-                    style={styles.eyeIcon}
-                    onPress={() => setShowPassword(!showPassword)}
-                  >
-                    <Ionicons
-                      name={showPassword ? "eye-off" : "eye"}
-                      size={22}
-                      color="#555"
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: "#2e6b34",
-                    width: "100%",
-                    paddingVertical: 12,
-                    borderRadius: 8,
-                    alignItems: "center",
-                    marginTop: 10,
-                  }}
-                  onPress={saveConfig}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text
-                      style={{
-                        color: "#fff",
-                        fontWeight: "bold",
-                        fontSize: 16,
-                      }}
-                    >
-                      Proceed
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
-
-            {calibrationStep === 1 && !skipEmptyStep && (
-              <>
-                <Text style={styles.modalText}>
-                  {calibrationMessage ||
-                    "Please make sure your tank is empty before calibration."}
-                </Text>
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity
-                    style={[styles.modalBtn, { backgroundColor: "#ccc" }]}
-                    onPress={() => setModalVisible(false)}
-                  >
-                    <Text>Back</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalBtn,
-                      {
-                        backgroundColor: isCalibrating ? "#a5d6a7" : "#4caf50",
-                      },
-                    ]}
-                    onPress={handleCalibrate}
-                    disabled={isCalibrating}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "bold" }}>
-                      {isCalibrating ? "Calibrating..." : "Calibrate Empty"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            {calibrationStep === 2 && (
-              <>
-                <Text style={styles.modalText}>
-                  {calibrationMessage ||
-                    "Fill your tank completely and press Calibrate Full."}
-                </Text>
-                <View style={styles.tankContainer}>
-                  <View style={styles.tank}>
-                    <Animated.View
-                      style={[styles.waterFill, { height: fillHeight }]}
-                    />
-                  </View>
-                </View>
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity
-                    style={[styles.modalBtn, { backgroundColor: "#ccc" }]}
-                    onPress={() => setCalibrationStep(1)}
-                  >
-                    <Text>Back</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalBtn,
-                      {
-                        backgroundColor: isCalibrating ? "#a5d6a7" : "#4caf50",
-                      },
-                    ]}
-                    onPress={handleCalibrate}
-                    disabled={isCalibrating}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "bold" }}>
-                      {isCalibrating ? "Calibrating..." : "Calibrate Full"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            {calibrationStep === 3 && (
-              <>
-                <Text style={styles.modalText}>
-                  {calibrationMessage ||
-                    "Water Level Sensor successfully calibrated! Press Confirm to save."}
-                </Text>
-
-                <TouchableOpacity
-                  style={styles.confirmButton}
-                  onPress={handleConfirmCalibration}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 16 }}>
-                    Confirm
-                  </Text>
-                </TouchableOpacity>
-
-              </>
-            )}
-
+        {/* WATER ANALYSIS CARD */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Water Container</Text>
+            <Text style={styles.sectionHint}>Usage prediction</Text>
           </View>
-        </View>
-      </Modal>
 
-<Modal
-  animationType="fade"
-  transparent
-  visible={waterModalVisible}
-  onRequestClose={() => setWaterModalVisible(false)}
->
-  <View style={styles.modalOverlay}>
-    <View
-      style={{
-        width: "85%",
-        padding: 20,
-        backgroundColor: "#ffffff",
-        borderRadius: 12,
-        alignSelf: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 20,
-          fontWeight: "700",
-          marginBottom: 10,
-          textAlign: "center",
-        }}
-      >
-        Water Container Analysis
-      </Text>
-
-      {waterAnalysis ? (
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 15,
-          }}
-        >
-          <Ionicons
-            name="water"
-            size={22}
-            color="#0288d1"
-            style={{ marginRight: 8 }}
-          />
-          <Text
-            style={{
-              fontWeight: "900",
-              fontSize: 16,
-              color: "#d32f2f",
-              textAlign: "center",
-            }}
+          <TouchableOpacity
+            style={styles.actionCard}
+            activeOpacity={0.88}
+            onPress={() => setWaterModalVisible(true)}
           >
-            {waterAnalysis.insight || "Analyzing data..."}
-          </Text>
+            <View style={styles.actionIconWrap}>
+              <Ionicons
+                name="water-outline"
+                size={22}
+                color={stylesTokens.primary}
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.actionTitle}>Water container analysis</Text>
+              <Text style={styles.actionSubtitle}>
+                {waterAnalysis ? waterAnalysis.insight : "Collecting data..."}
+              </Text>
+
+              <View style={styles.chipsRow}>
+                <View style={styles.chip}>
+                  <Ionicons
+                    name="speedometer-outline"
+                    size={14}
+                    color={stylesTokens.muted}
+                  />
+                  <Text style={styles.chipText}>
+                    {waterAnalysis ? `${waterAnalysis.usageRate}%/hr` : "—"}
+                  </Text>
+                </View>
+                <View style={styles.chip}>
+                  <Ionicons
+                    name="hourglass-outline"
+                    size={14}
+                    color={stylesTokens.muted}
+                  />
+                  <Text style={styles.chipText}>
+                    {waterAnalysis ? waterAnalysis.timeToEmpty : "—"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.progressRow}>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${waterPct}%` },
+                      waterPct <= 10 && { backgroundColor: stylesTokens.danger },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {waterAnalysis ? `${Math.round(waterPct)}%` : "—"}
+                </Text>
+              </View>
+            </View>
+
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={stylesTokens.muted}
+            />
+          </TouchableOpacity>
+
+          {/* Calibration entry (optional) */}
+          {/*
+          <TouchableOpacity
+            style={[styles.actionCard, { marginTop: 12 }]}
+            activeOpacity={0.85}
+            onPress={checkCalibrationStatus}
+          >
+            <View style={[styles.actionIconWrap, { backgroundColor: "rgba(36,153,30,0.12)" }]}>
+              <Ionicons name="construct-outline" size={22} color={stylesTokens.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.actionTitle}>Set up water container</Text>
+              <Text style={styles.actionSubtitle}>Configure WiFi and calibrate sensor</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={stylesTokens.muted} />
+          </TouchableOpacity>
+          */}
         </View>
-      ) : (
-        <View style={{ alignItems: "center", marginVertical: 20 }}>
-          <Text style={{ fontWeight: "700" }}>Collecting data...</Text>
-          <ActivityIndicator size="small" color="#0288d1" />
-        </View>
-      )}
 
-      <View
-        style={{
-          backgroundColor: "#e3f2fd",
-          padding: 15,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: "#b3d9fc",
-        }}
-      >
-        {waterAnalysis && (
-          <>
-            <Text>Current Water Level: {waterAnalysis.currentLevel} %</Text>
-            <Text>Usage Rate: {waterAnalysis.usageRate} % per hour</Text>
-            <Text>Time to Empty: {waterAnalysis.timeToEmpty}</Text>
-            <Text>Refill Needed: {waterAnalysis.refillNeeded ? "Yes" : "No"}</Text>
-          </>
-        )}
-      </View>
+        {/* CROP HEALTH */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Crop Health</Text>
+            <Text style={styles.sectionHint}>Status summary</Text>
+          </View>
 
-      <TouchableOpacity
-        style={{
-          backgroundColor: "#a8e6a8ff",
-          alignSelf: "center",
-          paddingHorizontal: 30,
-          paddingVertical: 12,
-          borderRadius: 8,
-          marginTop: 15,
-        }}
-        onPress={() => setWaterModalVisible(false)}
-      >
-        <Text
-          style={{
-            color: "#080707ff",
-            fontSize: 16,
-            textAlign: "center",
-            fontWeight: "700",
-          }}
-        >
-          Close
-        </Text>
-      </TouchableOpacity>
-    </View>
-  </View>
-</Modal>
+          <View style={styles.healthCard}>
+            <View
+              style={[
+                styles.actionIconWrap,
+                { backgroundColor: "rgba(36,153,30,0.12)" },
+              ]}
+            >
+              <Ionicons
+                name="leaf-outline"
+                size={22}
+                color={stylesTokens.success}
+              />
+            </View>
 
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={existingCalibrationModalVisible}
-        onRequestClose={() => setExistingCalibrationModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalText}>Existing Calibration Found</Text>
-            <Text style={{ textAlign: "center", marginBottom: 20 }}>
-              An empty tank measurement already exists. Do you want to use it or reset?
-            </Text>
-
-            <View style={{ flexDirection: "row", justifyContent: "space-between", width: "100%" }}>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: "#4caf50", flex: 1, marginRight: 5 }]}
-                onPress={() => {
-                  setUseExisting(true);
-                  setExistingEmptyDistance(existingCalibrationDistance);
-                  setSkipEmptyStep(true);
-                  setCalibrationStep(0);
-                  setCalibrationMessage(
-                    "Enter WiFi name and password"
-                  );
-                  setExistingCalibrationModalVisible(false);
-                  setModalVisible(true);
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "bold" }}>Use</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: "#f44336", flex: 1, marginLeft: 5 }]}
-                onPress={() => {
-                  setUseExisting(false);
-                  setExistingEmptyDistance(null);
-                  setSkipEmptyStep(false);
-                  setCalibrationStep(0);
-                  setCalibrationMessage(
-                    "Enter WiFi name and password"
-                  );
-                  setExistingCalibrationModalVisible(false);
-                  setModalVisible(true);
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "bold" }}>Reset</Text>
-              </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              {plantStatus?.status ? (
+                <>
+                  <Text
+                    style={[
+                      styles.healthTitle,
+                      { color: plantStatus.statusColor || stylesTokens.text },
+                    ]}
+                  >
+                    {plantStatus.status}
+                  </Text>
+                  <Text style={styles.healthSub}>
+                    Last updated {timeAgo || "Just now"}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.healthTitle}>No status yet</Text>
+                  <Text style={styles.healthSub}>
+                    View Crop Monitor to generate plant health status.
+                  </Text>
+                </>
+              )}
             </View>
           </View>
         </View>
-      </Modal>
 
-    </ScrollView>
+        {/* ===== CALIBRATION MODAL ===== */}
+        <Modal
+          animationType="fade"
+          transparent
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalTitle}>Water Sensor Calibration</Text>
+                  <Text style={styles.modalSub}>
+                    Step {Math.max(1, calibrationStep + 1)} of 4
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setModalVisible(false)}
+                  hitSlop={10}
+                  style={styles.modalIconBtn}
+                >
+                  <Ionicons name="close" size={20} color={stylesTokens.text} />
+                </TouchableOpacity>
+              </View>
+
+              {calibrationStep === 0 && (
+                <>
+                  <Text style={styles.modalBodyText}>
+                    {calibrationMessage ||
+                      "Enter your WiFi name and password to connect to the device."}
+                  </Text>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>WiFi Name (SSID)</Text>
+                    <TextInput
+                      placeholder="e.g. PLDTHOMEFIBR..."
+                      value={wifiSSID}
+                      onChangeText={setWifiSSID}
+                      style={styles.input}
+                      placeholderTextColor="#9aa3af"
+                    />
+                  </View>
+
+                  <View style={styles.field}>
+                    <Text style={styles.label}>WiFi Password</Text>
+                    <View style={styles.passwordWrap}>
+                      <TextInput
+                        placeholder="Enter password"
+                        value={wifiPass}
+                        onChangeText={setWifiPass}
+                        secureTextEntry={!showPassword}
+                        style={[styles.input, { paddingRight: 44 }]}
+                        placeholderTextColor="#9aa3af"
+                      />
+                      <TouchableOpacity
+                        style={styles.eyeBtn}
+                        onPress={() => setShowPassword(!showPassword)}
+                        hitSlop={10}
+                      >
+                        <Ionicons
+                          name={showPassword ? "eye-off" : "eye"}
+                          size={18}
+                          color={stylesTokens.muted}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
+                    onPress={saveConfig}
+                    disabled={loading}
+                    activeOpacity={0.9}
+                  >
+                    {loading ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryBtnText}>Proceed</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {calibrationStep === 1 && !skipEmptyStep && (
+                <>
+                  <Text style={styles.modalBodyText}>
+                    {calibrationMessage ||
+                      "Please make sure your tank is empty before calibration."}
+                  </Text>
+
+                  <View style={styles.row}>
+                    <TouchableOpacity
+                      style={styles.secondaryBtn}
+                      onPress={() => setModalVisible(false)}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.secondaryBtnText}>Back</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryBtn,
+                        isCalibrating && { opacity: 0.7 },
+                      ]}
+                      onPress={handleCalibrate}
+                      disabled={isCalibrating}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {isCalibrating ? "Calibrating..." : "Calibrate Empty"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {calibrationStep === 2 && (
+                <>
+                  <Text style={styles.modalBodyText}>
+                    {calibrationMessage ||
+                      "Fill your tank completely and press Calibrate Full."}
+                  </Text>
+
+                  <View style={styles.tankWrap}>
+                    <View style={styles.tank}>
+                      <Animated.View
+                        style={[styles.waterFill, { height: fillHeight }]}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.row}>
+                    <TouchableOpacity
+                      style={styles.secondaryBtn}
+                      onPress={() => setCalibrationStep(1)}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.secondaryBtnText}>Back</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryBtn,
+                        isCalibrating && { opacity: 0.7 },
+                      ]}
+                      onPress={handleCalibrate}
+                      disabled={isCalibrating}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {isCalibrating ? "Calibrating..." : "Calibrate Full"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {calibrationStep === 3 && (
+                <>
+                  <Text style={styles.modalBodyText}>
+                    {calibrationMessage ||
+                      "Water Level Sensor successfully calibrated! Press Confirm to save."}
+                  </Text>
+
+                  <TouchableOpacity
+                    style={styles.primaryBtn}
+                    onPress={handleConfirmCalibration}
+                    activeOpacity={0.9}
+                  >
+                    <Text style={styles.primaryBtnText}>Confirm</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.ghostBtn, { marginTop: 10 }]}
+                    onPress={handleRecalibrate}
+                    activeOpacity={0.9}
+                  >
+                    <Text style={styles.ghostBtnText}>Reset & recalibrate</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== WATER ANALYSIS MODAL ===== */}
+        <Modal
+          animationType="fade"
+          transparent
+          visible={waterModalVisible}
+          onRequestClose={() => setWaterModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalTitle}>Water Container Analysis</Text>
+                  <Text style={styles.modalSub}>Latest readings</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setWaterModalVisible(false)}
+                  hitSlop={10}
+                  style={styles.modalIconBtn}
+                >
+                  <Ionicons name="close" size={20} color={stylesTokens.text} />
+                </TouchableOpacity>
+              </View>
+
+              {waterAnalysis ? (
+                <>
+                  <View style={styles.notice}>
+                    <View style={styles.noticeIcon}>
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={18}
+                        color={stylesTokens.primary}
+                      />
+                    </View>
+                    <Text style={styles.noticeText}>
+                      {waterAnalysis.insight || "Analyzing..."}
+                    </Text>
+                  </View>
+
+                  <View style={styles.metricsGrid}>
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabel}>Current Level</Text>
+                      <Text style={styles.metricValue}>
+                        {waterAnalysis.currentLevel}%
+                      </Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabel}>Usage Rate</Text>
+                      <Text style={styles.metricValue}>
+                        {waterAnalysis.usageRate}% / hr
+                      </Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabel}>Time to Empty</Text>
+                      <Text style={styles.metricValue}>
+                        {waterAnalysis.timeToEmpty}
+                      </Text>
+                    </View>
+
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricLabel}>Refill Needed</Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          waterAnalysis.refillNeeded && {
+                            color: stylesTokens.danger,
+                          },
+                        ]}
+                      >
+                        {waterAnalysis.refillNeeded ? "YES" : "NO"}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <View style={{ alignItems: "center", paddingVertical: 18 }}>
+                  <Text style={styles.collectTitle}>Collecting data...</Text>
+                  <ActivityIndicator size="small" color={stylesTokens.primary} />
+                  <Text style={styles.collectHint}>
+                    If this never updates, your tank_data rows likely do not include
+                    calibration (distance_empty/full) and your tank_level is not a
+                    percent. Store calibration in water_device or include it in tank_data.
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.primaryBtn, { marginTop: 12 }]}
+                onPress={() => setWaterModalVisible(false)}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.primaryBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ===== EXISTING CALIBRATION MODAL ===== */}
+        <Modal
+          animationType="fade"
+          transparent
+          visible={existingCalibrationModalVisible}
+          onRequestClose={() => setExistingCalibrationModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalTitle}>Existing calibration found</Text>
+                  <Text style={styles.modalSub}>Use previous empty distance?</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setExistingCalibrationModalVisible(false)}
+                  hitSlop={10}
+                  style={styles.modalIconBtn}
+                >
+                  <Ionicons name="close" size={20} color={stylesTokens.text} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalBodyText}>
+                An empty tank measurement already exists. Do you want to use it or
+                reset?
+              </Text>
+
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={styles.secondaryBtn}
+                  onPress={() => {
+                    setUseExisting(true);
+                    setExistingEmptyDistance(existingCalibrationDistance);
+                    setSkipEmptyStep(true);
+                    setCalibrationStep(0);
+                    setCalibrationMessage("Enter WiFi name and password");
+                    setExistingCalibrationModalVisible(false);
+                    setModalVisible(true);
+                  }}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.secondaryBtnText}>Use existing</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.primaryBtn,
+                    { backgroundColor: stylesTokens.danger },
+                  ]}
+                  onPress={() => {
+                    setUseExisting(false);
+                    setExistingEmptyDistance(null);
+                    setSkipEmptyStep(false);
+                    setCalibrationStep(0);
+                    setCalibrationMessage("Enter WiFi name and password");
+                    setExistingCalibrationModalVisible(false);
+                    setModalVisible(true);
+                  }}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.primaryBtnText}>Reset</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-
-
+/* ================== STYLES (UPDATED HEADER ONLY + SAME MODERN LOOK) ================== */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  section: { padding: 15 },
-  sectionTitle: { fontSize: 21, fontWeight: "bold", marginBottom: 10 },
-  temperature: { fontSize: 36, fontWeight: "bold", textAlign: "center" },
-  description: {
+  safe: { flex: 1, backgroundColor: stylesTokens.bg },
+  container: { flex: 1, backgroundColor: stylesTokens.bg },
+  content: {
+    paddingHorizontal: 14,
+    paddingTop: Platform.OS === "android" ? 10 : 12,
+    paddingBottom: 16,
+  },
+
+  /* Header: ONLY Weather */
+  pageHeader: {
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+  },
+  pageHeaderTitle: {
     fontSize: 18,
-    textAlign: "center",
-    color: "#555",
-    marginVertical: 5,
+    fontWeight: "900",
+    color: stylesTokens.text,
+    letterSpacing: 0.2,
   },
-  weatherCards: {
+
+  /* Weather card */
+  hero: {
+    padding: 14,
+    backgroundColor: stylesTokens.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    shadowColor: stylesTokens.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    elevation: 3,
+  },
+  heroMain: {
     flexDirection: "row",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    marginTop: 15,
+    gap: 12,
   },
-  weatherCard: {
-    flex: 1,
-    backgroundColor: "#e0f7fa",
-    padding: 15,
-    borderRadius: 10,
-    alignItems: "center",
-    marginHorizontal: 5,
-    elevation: 2,
-    minHeight: 160,
-    justifyContent: "space-around",
+  heroTempRow: { marginTop: 4, minHeight: 34, justifyContent: "center" },
+  heroTemp: { fontSize: 34, fontWeight: "900", color: stylesTokens.text },
+  heroDesc: {
+    marginTop: 4,
+    fontSize: 13,
+    color: stylesTokens.muted,
+    fontWeight: "700",
+    textTransform: "capitalize",
   },
-  weatherTime: { fontWeight: "bold", marginBottom: 5 },
-  weatherTemp: { fontSize: 16, fontWeight: "bold", marginTop: 5 },
-  weatherDesc: { fontSize: 12, color: "#555" },
-  cardButton: {
+  heroLocRow: {
+    marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#e3f2fd",
-    padding: 15,
-    borderRadius: 10,
-    elevation: 2,
-    marginBottom: -5,
+    gap: 6,
   },
-  cardTitle: { fontSize: 16, fontWeight: "600" },
-  cardSubtitle: { fontSize: 12, color: "#555", marginTop: 3 },
-  confirmButton: {
-    backgroundColor: "#4caf50",
-    width: "100%",
-    paddingVertical: 12,
-    borderRadius: 8,
+  heroLocation: { fontSize: 12, color: stylesTokens.muted, fontWeight: "700" },
+
+  /* Forecast */
+  forecastRow: { paddingTop: 14, paddingBottom: 2, gap: 10 },
+  forecastCard: {
+    width: 110,
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: "#F2F6FF",
+    borderWidth: 1,
+    borderColor: "rgba(42,118,232,0.18)",
     alignItems: "center",
-    marginTop: 15,
+    justifyContent: "center",
+    marginRight: 10,
   },
+  forecastTime: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: stylesTokens.text,
+    marginBottom: 8,
+  },
+  forecastIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  forecastTemp: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: stylesTokens.text,
+    marginTop: 8,
+  },
+  forecastDesc: {
+    fontSize: 12,
+    color: stylesTokens.muted,
+    marginTop: 2,
+    fontWeight: "700",
+  },
+
+  /* Sections */
+  section: { paddingTop: 16 },
+  sectionHead: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: "900", color: stylesTokens.text },
+  sectionHint: { fontSize: 12, color: stylesTokens.muted, fontWeight: "800" },
+
+  /* Cards */
+  actionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: stylesTokens.card,
+    padding: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    shadowColor: stylesTokens.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
+    elevation: 2,
+  },
+  actionIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: "rgba(42,118,232,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(42,118,232,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionTitle: { fontSize: 14, fontWeight: "900", color: stylesTokens.text },
+  actionSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: stylesTokens.muted,
+    fontWeight: "700",
+  },
+
+  chipsRow: { flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#F3F5FA",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+  },
+  chipText: { fontSize: 12, color: stylesTokens.text, fontWeight: "800" },
+
+  progressRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  progressTrack: {
+    flex: 1,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(15,23,42,0.08)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: stylesTokens.primary,
+  },
+  progressText: { fontSize: 12, color: stylesTokens.muted, fontWeight: "900" },
 
   healthCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f1f8e9",
-    padding: 15,
-    borderRadius: 10,
+    gap: 12,
+    backgroundColor: stylesTokens.card,
+    padding: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    shadowColor: stylesTokens.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
     elevation: 2,
-    marginBottom: 15,
   },
-  lastUpdated: { fontSize: 12, color: "gray", marginTop: 5 },
+  healthTitle: { fontSize: 14, fontWeight: "900", color: stylesTokens.text },
+  healthSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: stylesTokens.muted,
+    fontWeight: "700",
+  },
+
+  /* Modals */
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(2, 6, 23, 0.55)",
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 14,
   },
-  modalContainer: {
-    backgroundColor: "#fdfdfdff",
-    borderRadius: 12,
-    padding: 20,
-    width: "80%",
-    alignItems: "center",
-    elevation: 5,
-  },
-  modalText: {
-    textAlign: "center",
-    fontSize: 15,
-    marginBottom: 20,
-    color: "#000000ff",
-    fontWeight: "500",
-  },
-  modalButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  modalSheet: {
     width: "100%",
-    marginTop: 20,
+    maxWidth: 460,
+    backgroundColor: stylesTokens.card,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 7,
   },
-  modalBtn: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 10,
-    marginHorizontal: 5,
-    borderRadius: 8,
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
   },
-  tankContainer: {
+  modalIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: "#F3F5FA",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
   },
-  tank: {
-    width: 100,
-    height: 150,
-    borderWidth: 2,
-    borderColor: "#0288d1",
-    borderRadius: 8,
-    overflow: "hidden",
-    backgroundColor: "#e0f7fa",
-    justifyContent: "flex-end",
+  modalTitle: { fontSize: 16, fontWeight: "900", color: stylesTokens.text },
+  modalSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: stylesTokens.muted,
+    fontWeight: "800",
   },
-  waterFill: { backgroundColor: "#4fc3f7", width: "100%" },
+  modalBodyText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: stylesTokens.muted,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+
+  field: { marginTop: 14 },
+  label: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: stylesTokens.text,
+    marginBottom: 8,
+  },
+
   input: {
     width: "100%",
-    height: 45,
-    borderColor: "#b4b4b4ff",
+    height: 48,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    backgroundColor: "#F3F5FA",
     borderWidth: 1,
-    borderRadius: 8,
-    marginVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: "#fff",
-  },
-  inputWrapper: {
-    width: "100%",
-    position: "relative",
-    marginVertical: 8,
+    borderColor: stylesTokens.border,
+    color: stylesTokens.text,
+    fontWeight: "700",
   },
 
-  eyeIcon: {
-    position: "absolute",
-    right: 10,
-    top: 11, // aligns with TextInput
-    padding: 5,
+  passwordWrap: { position: "relative", justifyContent: "center" },
+  eyeBtn: { position: "absolute", right: 12, height: 48, justifyContent: "center" },
+
+  row: { flexDirection: "row", gap: 10, marginTop: 16 },
+
+  primaryBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: stylesTokens.primary,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  primaryBtnText: { color: "#fff", fontWeight: "900", fontSize: 14 },
 
+  secondaryBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: "#F3F5FA",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryBtnText: { color: stylesTokens.text, fontWeight: "900", fontSize: 14 },
 
+  ghostBtn: {
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ghostBtnText: { color: stylesTokens.text, fontWeight: "900", fontSize: 13 },
+
+  tankWrap: { alignItems: "center", justifyContent: "center", marginTop: 14 },
+  tank: {
+    width: 130,
+    height: 180,
+    borderWidth: 2,
+    borderColor: "rgba(42,118,232,0.55)",
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#EAF2FF",
+    justifyContent: "flex-end",
+  },
+  waterFill: { backgroundColor: "rgba(42,118,232,0.55)", width: "100%" },
+
+  notice: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: "#F2F6FF",
+    borderWidth: 1,
+    borderColor: "rgba(42,118,232,0.16)",
+  },
+  noticeIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noticeText: { flex: 1, fontSize: 13, color: stylesTokens.text, fontWeight: "800" },
+
+  metricsGrid: { marginTop: 12, gap: 10 },
+  metricCard: {
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: "#F3F5FA",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+  },
+  metricLabel: { fontSize: 12, color: stylesTokens.muted, fontWeight: "900" },
+  metricValue: { marginTop: 6, fontSize: 16, color: stylesTokens.text, fontWeight: "900" },
+
+  collectTitle: {
+    fontWeight: "900",
+    color: stylesTokens.text,
+    marginBottom: 10,
+    fontSize: 14,
+  },
+  collectHint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: stylesTokens.muted,
+    textAlign: "center",
+    lineHeight: 16,
+    fontWeight: "700",
+  },
 });

@@ -763,7 +763,7 @@ export default function DeviceManagementScreen() {
                         style={[styles.secondaryBtn, styles.warnAmber]}
                         activeOpacity={0.9}
                         onPress={() => {
-                          setInfoModal({ visible: true, message: "Resetting WiFi… This may take a moment." });
+                          setInfoModal({ visible: true, message: "Resetting WiFi Connection… This may take a moment." });
                           setSelected(null);
 
                           (async () => {
@@ -787,10 +787,10 @@ export default function DeviceManagementScreen() {
                               setInfoModal({
                                 visible: true,
                                 message:
-                                  "WiFi reset triggered.\n\nIf you are connected to the ESP hotspot, it resets immediately.\nOtherwise, it will reset once the device checks the server flag.",
+                                  "WiFi reset successfully",
                               });
                             } catch (err) {
-                              setInfoModal({ visible: true, message: "Failed to trigger WiFi reset. Please try again." });
+                              setInfoModal({ visible: true, message: "Failed to reset wifi. Please try again." });
                             }
                           })();
                         }}
@@ -1030,7 +1030,7 @@ export default function DeviceManagementScreen() {
                       setInfoModal({
                         visible: true,
                         message:
-                          "Device configured successfully! Switch back to your home WiFi.\n\nIf you want it Active, press Reconnect Device (that sets device_status=Active).",
+                          "Device configured successfully! Switch back to your home WiFi.",
                       });
 
                       setActivateModal(false);
@@ -1040,12 +1040,12 @@ export default function DeviceManagementScreen() {
                       setTimeout(fetchDevices, 3000);
                     } else {
                       const text = await response.text();
-                      setInfoModal({ visible: true, message: `ESP32 rejected configuration request: ${text}` });
+                      setInfoModal({ visible: true, message: `Device rejected configuration request: ${text}` });
                     }
                   } catch (err) {
                     setInfoModal({
                       visible: true,
-                      message: "Could not connect to ESP32 AP. Connect to 'Oksi Water Tank' WiFi and try again.",
+                      message: "Could not connect to the device. Connect to 'Oksi Water Tank' WiFi and try again.",
                     });
                   }
                 }}
