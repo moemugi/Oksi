@@ -1,18 +1,83 @@
 import React, { useState, useContext, useEffect, useRef } from "react";
 import {
   View,
-  TouchableOpacity,
   Text,
-  Image,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { useRoute } from "@react-navigation/native";
 import { SensorContext } from "../context/SensorContext";
 import CircularMoisture from "../components/CircularMoisture";
 import { supabase } from "../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as ExpoNotifications from "expo-notifications";
+
+/* NOTIFICATION HANDLER (REAL ALERTS) */
+ExpoNotifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true, // ✅ lockscreen/banner
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+/* PERMISSION + ANDROID CHANNEL (EXPO GO SAFE) */
+const ensureNotifPermissionAndChannel = async () => {
+  try {
+    const { status: existingStatus } =
+      await ExpoNotifications.getPermissionsAsync();
+
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== "granted") {
+      const { status } = await ExpoNotifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== "granted") return false;
+
+    if (Platform.OS === "android") {
+      await ExpoNotifications.setNotificationChannelAsync("alerts", {
+        name: "Alerts",
+        importance: ExpoNotifications.AndroidImportance.HIGH,
+        sound: "default", // ⚠️ Expo Go: custom mp3 won't work here
+        vibrationPattern: [0, 250, 250, 250],
+        lockscreenVisibility:
+          ExpoNotifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    }
+
+    return true;
+  } catch (e) {
+    console.error("Notification setup error:", e);
+    return false;
+  }
+};
+
+const fireLocalNotif = async ({ title, body }) => {
+  try {
+    const ok = await ensureNotifPermissionAndChannel();
+    if (!ok) return;
+
+    await ExpoNotifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: "default",
+        channelId: "alerts",
+      },
+      trigger: {
+        type: ExpoNotifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 1,
+        repeats: false,
+      },
+    });
+  } catch (e) {
+    console.error("fireLocalNotif error:", e);
+  }
+};
 
 export default function MonitorDevice() {
   const route = useRoute();
@@ -27,14 +92,13 @@ export default function MonitorDevice() {
     setSensorData: setGlobalSensorData,
     setPlantStatus,
     setLastUpdated,
-    notifications,
     setNotifications,
     selectedSensors,
   } = useContext(SensorContext);
 
   const prevPlantStatusRef = useRef(null);
 
-  /* ---------------- RELAY COMMAND ---------------- */
+  /* RELAY COMMAND  */
   const triggerRelay = async (state = "ON") => {
     try {
       const {
@@ -60,7 +124,7 @@ export default function MonitorDevice() {
     }
   };
 
-  /* ---------------- WEATHER ---------------- */
+  /* WEATHER */
   const fetchWeather = async () => {
     try {
       const apiKey = "bd96cb9d18e16f8796d773ef208270be";
@@ -76,7 +140,105 @@ export default function MonitorDevice() {
     }
   };
 
-  /* ---------------- SENSOR FETCH ---------------- */
+  /* COOLDOWN (ANTI-SPAM) */
+  const canSendAgain = async (key, cooldownMs = 5 * 60 * 1000) => {
+    try {
+      const storageKey = `cooldown_${deviceId}_${key}`;
+      const last = await AsyncStorage.getItem(storageKey);
+      const lastTs = last ? Number(last) : 0;
+
+      if (Date.now() - lastTs < cooldownMs) return false;
+
+      await AsyncStorage.setItem(storageKey, String(Date.now()));
+      return true;
+    } catch (e) {
+      console.error("canSendAgain error:", e);
+      return true;
+    }
+  };
+
+  /* NOTIFICATIONS (REAL + IN-APP) */
+  const generateNotifications = async (data) => {
+    if (!selectedSensors) return [];
+
+    const alerts = [];
+    const now = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    if (selectedSensors.soilMoisture && data.soil < 20) {
+      const alert = {
+        id: `soil-${Date.now()}`,
+        type: "soilMoisture",
+        title: "Soil Moisture Alert",
+        time: now,
+        message: `Soil moisture is low: ${data.soil}%`,
+        sent: false,
+      };
+      alerts.push(alert);
+
+      if (await canSendAgain("soil")) {
+        await fireLocalNotif({ title: alert.title, body: alert.message });
+      }
+
+      await triggerRelay("ON");
+    }
+
+    if (selectedSensors.waterLevel && data.tank < 30) {
+      const alert = {
+        id: `tank-${Date.now()}`,
+        type: "waterLevel",
+        title: "Water Tank Alert",
+        time: now,
+        message: `Water tank low: ${data.tank}% remaining`,
+        sent: false,
+      };
+      alerts.push(alert);
+
+      if (await canSendAgain("tank")) {
+        await fireLocalNotif({ title: alert.title, body: alert.message });
+      }
+
+      await triggerRelay("OFF");
+    }
+
+    if (selectedSensors.temperature && data.temperature > 35) {
+      const alert = {
+        id: `temp-${Date.now()}`,
+        type: "temperature",
+        title: "Temperature Alert",
+        time: now,
+        message: `High temperature detected: ${data.temperature}°C`,
+        sent: false,
+      };
+      alerts.push(alert);
+
+      if (await canSendAgain("temp")) {
+        await fireLocalNotif({ title: alert.title, body: alert.message });
+      }
+    }
+
+    if (selectedSensors.battery && data.battery < 30) {
+      const alert = {
+        id: `battery-${Date.now()}`,
+        type: "battery",
+        title: "Battery Alert",
+        time: now,
+        message: `Low battery level: ${data.battery}%`,
+        sent: false,
+      };
+      alerts.push(alert);
+
+      if (await canSendAgain("battery")) {
+        await fireLocalNotif({ title: alert.title, body: alert.message });
+      }
+    }
+
+    return alerts;
+  };
+
+  /* SENSOR FETCH */
   const fetchSensorData = async (auto = false) => {
     if (!auto) setLoading(true);
     else setRefreshing(true);
@@ -134,17 +296,15 @@ export default function MonitorDevice() {
       setGlobalSensorData(mergedData);
 
       const newAlerts = await generateNotifications(mergedData);
+
       setNotifications((prev) => {
         const unique = newAlerts.filter(
-          (a) =>
-            !prev.some(
-              (n) => n.title === a.title && n.message === a.message
-            )
+          (a) => !prev.some((n) => n.title === a.title && n.message === a.message)
         );
         return [...unique, ...prev];
       });
 
-      /* --------- WEIGHTED STATUS --------- */
+      /* WEIGHTED STATUS */
       const soilNorm = Math.min((mergedData.soil / 30) * 0.6, 1);
       const tempNorm = Math.min((mergedData.temperature / 32) * 0.64, 1);
       const humidityNorm = Math.min((mergedData.humidity / 60) * 0.6, 1);
@@ -200,72 +360,16 @@ export default function MonitorDevice() {
     setRefreshing(false);
   };
 
-  /* ---------------- NOTIFICATIONS (UNCHANGED) ---------------- */
-  const generateNotifications = async (data) => {
-    if (!selectedSensors) return [];
-    const alerts = [];
-    const now = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    if (selectedSensors.soilMoisture && data.soil < 20) {
-      alerts.push({
-        id: `soil-${Date.now()}`,
-        type: "soilMoisture",
-        title: "Soil Moisture Alert",
-        time: now,
-        message: `Soil moisture is low: ${data.soil}%`,
-        sent: false,
-      });
-      await triggerRelay("ON");
-    }
-
-    if (selectedSensors.waterLevel && data.tank < 30) {
-      alerts.push({
-        id: `tank-${Date.now()}`,
-        type: "waterLevel",
-        title: "Water Tank Alert",
-        time: now,
-        message: `Water tank low: ${data.tank}% remaining`,
-        sent: false,
-      });
-      await triggerRelay("OFF");
-    }
-
-    if (selectedSensors.temperature && data.temperature > 35) {
-      alerts.push({
-        id: `temp-${Date.now()}`,
-        type: "temperature",
-        title: "Temperature Alert",
-        time: now,
-        message: `High temperature detected: ${data.temperature}°C`,
-        sent: false,
-      });
-    }
-
-    if (selectedSensors.battery && data.battery < 30) {
-      alerts.push({
-        id: `battery-${Date.now()}`,
-        type: "battery",
-        title: "Battery Alert",
-        time: now,
-        message: `Low battery level: ${data.battery}%`,
-        sent: false,
-      });
-    }
-
-    return alerts;
-  };
-
-  /* ---------------- AUTO START ---------------- */
+  /* AUTO START */
   useEffect(() => {
+    ensureNotifPermissionAndChannel();
+
     fetchSensorData();
     const interval = setInterval(() => fetchSensorData(true), 10000);
     return () => clearInterval(interval);
   }, []);
 
-  /* ---------------- UI ---------------- */
+  /* UI  */
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {loading && (
@@ -294,10 +398,9 @@ export default function MonitorDevice() {
             <Info label="💧 Humidity" value={`${sensorData.humidity}%`} />
             <Info
               label="☀ Light"
-              value={`${Math.min(
-                (sensorData.light / 20000) * 100,
-                100
-              ).toFixed(1)}%`}
+              value={`${Math.min((sensorData.light / 20000) * 100, 100).toFixed(
+                1
+              )}%`}
             />
             <Info label="🌧 Rain" value={sensorData.rain} />
             <Info label="💦 Tank" value={`${sensorData.tank}%`} />
@@ -309,7 +412,7 @@ export default function MonitorDevice() {
   );
 }
 
-/* ---------------- SMALL COMPONENT ---------------- */
+/* SMALL COMPONENT */
 const Info = ({ label, value }) => (
   <View style={styles.squareCard}>
     <Text style={styles.cardLabel}>{label}</Text>
@@ -317,7 +420,7 @@ const Info = ({ label, value }) => (
   </View>
 );
 
-/* ---------------- STYLES ---------------- */
+/* STYLES */
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,

@@ -8,6 +8,7 @@ import {
   Modal,
   TouchableOpacity,
   Platform,
+  StatusBar, // ✅ ADDED
 } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import {
@@ -31,9 +32,14 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useNavigation } from "@react-navigation/native";
 import { SensorContext } from "../context/SensorContext"; // adjust path if needed
 
+import useLanguage from "../hooks/useLanguage";
+// const { lang, t, toggleLanguage } = useLanguage();
+
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
+
+const HEADER_GREEN = "#2E7D32";
 
 /* =========================================================
    HELPERS
@@ -204,86 +210,95 @@ function Tabs({ navigation }) {
   const { loggingOut } = useContext(SensorContext);
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: true,
-        headerTitleAlign: "left",
-        headerStyle: styles.headerStyle,
-        headerTintColor: "#fff",
+    <>
+      {/* ✅ FIX: sets Android StatusBar color so the "black gap" disappears */}
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={HEADER_GREEN}
+        translucent={false}
+      />
 
-        // ✅ ensure same container padding
-        headerLeftContainerStyle: styles.headerLeftContainer,
-
-        tabBarStyle: styles.tabBarStyle,
-        tabBarActiveTintColor: "#2E7D32",
-        tabBarInactiveTintColor: "#7A7A7A",
-        tabBarLabelStyle: styles.tabBarLabelStyle,
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-
-          if (route.name === "Home") iconName = focused ? "home" : "home-outline";
-          else if (route.name === "Notifications")
-            iconName = focused ? "notifications" : "notifications-outline";
-          else if (route.name === "Statistics")
-            iconName = focused ? "stats-chart" : "stats-chart-outline";
-          else iconName = "ellipse";
-
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-
-        headerLeft: () => (
-          <HeaderMenuButton onPress={() => navigation.openDrawer()} />
-        ),
-
-        headerRight: () => (
-          <HeaderProfile
-            showName={route.name === "Home"}
-            loggingOut={loggingOut}
-          />
-        ),
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      {/* <Tab.Screen name="Crop Monitor" component={CropMonitorScreen} /> */}
-      <Tab.Screen name="Notifications" component={NotificationsScreen} />
-      <Tab.Screen name="Statistics" component={StatisticsScreen} />
-
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{
-          tabBarItemStyle: { display: "none" },
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
           headerShown: true,
-          headerTitle: "Profile Settings",
-        }}
-      />
-      <Tab.Screen
-        name="AboutApp"
-        component={AboutApp}
-        options={{
-          tabBarItemStyle: { display: "none" },
-          headerShown: true,
-          headerTitle: "About the App",
-        }}
-      />
-      <Tab.Screen
-        name="AppGuide"
-        component={AppGuide}
-        options={{
-          tabBarItemStyle: { display: "none" },
-          headerShown: true,
-          headerTitle: "Application Guide",
-        }}
-      />
-      <Tab.Screen
-        name="DeviceManagement"
-        component={DeviceManagementStack}
-        options={{
-          tabBarItemStyle: { display: "none" },
-          headerShown: false,
-        }}
-      />
-    </Tab.Navigator>
+          headerTitleAlign: "left",
+          headerStyle: styles.headerStyle,
+          headerTintColor: "#fff",
+
+          // ✅ ensure same container padding
+          headerLeftContainerStyle: styles.headerLeftContainer,
+
+          tabBarStyle: styles.tabBarStyle,
+          tabBarActiveTintColor: HEADER_GREEN,
+          tabBarInactiveTintColor: "#7A7A7A",
+          tabBarLabelStyle: styles.tabBarLabelStyle,
+          tabBarIcon: ({ focused, color, size }) => {
+            let iconName;
+
+            if (route.name === "Home") iconName = focused ? "home" : "home-outline";
+            else if (route.name === "Notifications")
+              iconName = focused ? "notifications" : "notifications-outline";
+            else if (route.name === "Statistics")
+              iconName = focused ? "stats-chart" : "stats-chart-outline";
+            else iconName = "ellipse";
+
+            return <Ionicons name={iconName} size={size} color={color} />;
+          },
+
+          headerLeft: () => (
+            <HeaderMenuButton onPress={() => navigation.openDrawer()} />
+          ),
+
+          headerRight: () => (
+            <HeaderProfile
+              showName={route.name === "Home"}
+              loggingOut={loggingOut}
+            />
+          ),
+        })}
+      >
+        <Tab.Screen name="Home" component={HomeScreen} />
+        {/* <Tab.Screen name="Crop Monitor" component={CropMonitorScreen} /> */}
+        <Tab.Screen name="Notifications" component={NotificationsScreen} />
+        <Tab.Screen name="Statistics" component={StatisticsScreen} />
+
+        <Tab.Screen
+          name="Profile"
+          component={ProfileScreen}
+          options={{
+            tabBarItemStyle: { display: "none" },
+            headerShown: true,
+            headerTitle: "  Profile Settings",
+          }}
+        />
+        <Tab.Screen
+          name="AboutApp"
+          component={AboutApp}
+          options={{
+            tabBarItemStyle: { display: "none" },
+            headerShown: true,
+            headerTitle: "  About the App",
+          }}
+        />
+        <Tab.Screen
+          name="AppGuide"
+          component={AppGuide}
+          options={{
+            tabBarItemStyle: { display: "none" },
+            headerShown: true,
+            headerTitle: "  Application Guide",
+          }}
+        />
+        <Tab.Screen
+          name="DeviceManagement"
+          component={DeviceManagementStack}
+          options={{
+            tabBarItemStyle: { display: "none" },
+            headerShown: false,
+          }}
+        />
+      </Tab.Navigator>
+    </>
   );
 }
 
@@ -292,39 +307,48 @@ function Tabs({ navigation }) {
 ========================================================= */
 function DeviceManagementStack() {
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerStyle: styles.headerStyle,
-        headerTintColor: "#fff",
-        headerBackTitleVisible: false,
-
-        // ✅ make stack match tabs
-        headerLeftContainerStyle: styles.headerLeftContainer,
-      }}
-    >
-      <Stack.Screen
-        name="DeviceManagementMain"
-        component={DeviceManagement}
-        options={({ navigation }) => ({
-          title: "Device Management",
-          headerLeft: () => (
-            <HeaderMenuButton
-              onPress={() => navigation.getParent()?.openDrawer()}
-            />
-          ),
-        })}
+    <>
+      {/* ✅ keep the same StatusBar when entering this stack */}
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={HEADER_GREEN}
+        translucent={false}
       />
 
-      <Stack.Screen
-        name="MonitorDevice"
-        component={MonitorDevice}
-        options={{
-          title: "Device Monitor",
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: styles.headerStyle,
+          headerTintColor: "#fff",
           headerBackTitleVisible: false,
-          headerTitleAlign: "left",
+
+          // ✅ make stack match tabs
+          headerLeftContainerStyle: styles.headerLeftContainer,
         }}
-      />
-    </Stack.Navigator>
+      >
+        <Stack.Screen
+          name="DeviceManagementMain"
+          component={DeviceManagement}
+          options={({ navigation }) => ({
+            title: "  Device Management",
+            headerLeft: () => (
+              <HeaderMenuButton
+                onPress={() => navigation.getParent()?.openDrawer()}
+              />
+            ),
+          })}
+        />
+
+        <Stack.Screen
+          name="MonitorDevice"
+          component={MonitorDevice}
+          options={{
+            title: "Device Monitor",
+            headerBackTitleVisible: false,
+            headerTitleAlign: "left",
+          }}
+        />
+      </Stack.Navigator>
+    </>
   );
 }
 
@@ -343,6 +367,8 @@ function TabStack() {
    CUSTOM DRAWER CONTENT
 ========================================================= */
 function CustomDrawerContent(props) {
+  const { lang, t, toggleLanguage } = useLanguage();
+
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -475,12 +501,12 @@ function CustomDrawerContent(props) {
         </TouchableOpacity>
 
         <View style={{ alignItems: "center" }}>
-          <Text style={styles.helloText}>Hello,</Text>
+          <Text style={styles.helloText}>{t.hello}</Text>
           <Text style={styles.drawerName} numberOfLines={1}>
             {displayName || "Guest"}
           </Text>
           <View style={styles.drawerPill}>
-            <Ionicons name="leaf-outline" size={14} color="#2E7D32" />
+            <Ionicons name="leaf-outline" size={14} color={HEADER_GREEN} />
           </View>
         </View>
       </View>
@@ -501,7 +527,7 @@ function CustomDrawerContent(props) {
               />
             </View>
             <View>
-              <Text style={styles.menuLabel}>Notification Settings</Text>
+              <Text style={styles.menuLabel}>{t.notificationSettings}</Text>
               <Text style={styles.menuSubLabel}>
                 Choose which sensors show alerts
               </Text>
@@ -526,12 +552,12 @@ function CustomDrawerContent(props) {
                   soilMoisture: !selectedSensors.soilMoisture,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Soil Moisture"
+              text={t.soilMoisture}
               textStyle={styles.cbText}
             />
 
@@ -544,12 +570,12 @@ function CustomDrawerContent(props) {
                   temperature: !selectedSensors.temperature,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Temperature"
+              text={t.temperature}
               textStyle={styles.cbText}
             />
 
@@ -562,12 +588,12 @@ function CustomDrawerContent(props) {
                   rainDetection: !selectedSensors.rainDetection,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Rain Detection"
+              text={t.rainDetection}
               textStyle={styles.cbText}
             />
 
@@ -580,12 +606,12 @@ function CustomDrawerContent(props) {
                   lightIntensity: !selectedSensors.lightIntensity,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Light Intensity"
+              text={t.lightIntensity}
               textStyle={styles.cbText}
             />
 
@@ -598,12 +624,12 @@ function CustomDrawerContent(props) {
                   waterLevel: !selectedSensors.waterLevel,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Water Tank Level"
+              text={t.waterLevel}
               textStyle={styles.cbText}
             />
 
@@ -616,12 +642,12 @@ function CustomDrawerContent(props) {
                   pumpStatus: !selectedSensors.pumpStatus,
                 })
               }
-              fillColor="#2E7D32"
+              fillColor={HEADER_GREEN}
               size={22}
               disableBuiltInState
               iconStyle={styles.cbIcon}
               innerIconStyle={styles.cbInnerIcon}
-              text="Pump Status"
+              text={t.pumpStatus}
               textStyle={styles.cbText}
             />
           </View>
@@ -643,7 +669,7 @@ function CustomDrawerContent(props) {
             <View style={styles.iconChip}>
               <Ionicons name="person-outline" size={18} color="#1B5E20" />
             </View>
-            <Text style={styles.menuLabel}>Profile Settings</Text>
+            <Text style={styles.menuLabel}>{t.profileSettings}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#1B5E20" />
         </TouchableOpacity>
@@ -662,7 +688,7 @@ function CustomDrawerContent(props) {
             <View style={styles.iconChip}>
               <Ionicons name="construct-outline" size={18} color="#1B5E20" />
             </View>
-            <Text style={styles.menuLabel}>Device Management</Text>
+            <Text style={styles.menuLabel}>{t.DeviceManagement}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#1B5E20" />
         </TouchableOpacity>
@@ -681,16 +707,32 @@ function CustomDrawerContent(props) {
             <View style={styles.iconChip}>
               <Ionicons name="help-circle-outline" size={18} color="#1B5E20" />
             </View>
-            <Text style={styles.menuLabel}>Application Guide</Text>
+            <Text style={styles.menuLabel}>{t.appGuide}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#1B5E20" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.drawerRow}
+          onPress={toggleLanguage}
+          activeOpacity={0.85}
+        >
+          <View style={styles.drawerRowLeft}>
+            <View style={styles.iconChip}>
+              <Ionicons name="language-outline" size={18} color="#1B5E20" />
+            </View>
+
+            <Text style={styles.menuLabel}>
+              {t.language}: {lang}
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
 
       {/* ===== Footer Card ===== */}
       <View style={styles.drawerFooterCard}>
         <DrawerItem
-          label="About the app"
+          label={t.aboutApp}
           labelStyle={styles.footerLabel}
           icon={({ size }) => (
             <Ionicons
@@ -709,7 +751,7 @@ function CustomDrawerContent(props) {
         />
 
         <DrawerItem
-          label="Log Out"
+          label={t.logout}
           labelStyle={[styles.footerLabel, { color: "#B3261E" }]}
           icon={({ size }) => (
             <Ionicons name="log-out-outline" size={size} color="#B3261E" />
@@ -732,10 +774,8 @@ function CustomDrawerContent(props) {
               <View style={styles.modalIconCircle}>
                 <Ionicons name="log-out-outline" size={22} color="#B3261E" />
               </View>
-              <Text style={styles.modalTitle}>Confirm Log Out</Text>
-              <Text style={styles.modalText}>
-                Are you sure you want to log out?
-              </Text>
+              <Text style={styles.modalTitle}>{t.confirmLogout}</Text>
+              <Text style={styles.modalText}>{t.logoutMessage}</Text>
             </View>
 
             <View style={styles.modalButtons}>
@@ -747,7 +787,7 @@ function CustomDrawerContent(props) {
                 <Text
                   style={[styles.modalButtonText, styles.modalBtnGhostText]}
                 >
-                  Cancel
+                  {t.cancel}
                 </Text>
               </TouchableOpacity>
 
@@ -756,7 +796,6 @@ function CustomDrawerContent(props) {
                 activeOpacity={0.9}
                 onPress={async () => {
                   try {
-                    // mark logging out for UI
                     setLoggingOut(true);
 
                     resetSensorData();
@@ -791,7 +830,7 @@ function CustomDrawerContent(props) {
                   }
                 }}
               >
-                <Text style={styles.modalButtonText}>Log Out</Text>
+                <Text style={styles.modalButtonText}>{t.logOutButton}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -830,7 +869,7 @@ const styles = StyleSheet.create({
 
   /* ----- Header / Tab styles ----- */
   headerStyle: {
-    backgroundColor: "#2E7D32",
+    backgroundColor: HEADER_GREEN,
     elevation: 0,
     shadowOpacity: 0,
     borderBottomWidth: 0,
@@ -883,7 +922,7 @@ const styles = StyleSheet.create({
 
   /* ----- Drawer ----- */
   drawerStyle: { width: 300, backgroundColor: "#F6FBF7" },
-  drawerContainer: { flexGrow: 1, padding: 14, backgroundColor: "#7baa85" },
+  drawerContainer: { flexGrow: 1, padding: 14, backgroundColor: "#2E7D32" },
 
   drawerHeaderCard: {
     backgroundColor: "#ffffff",
@@ -971,7 +1010,12 @@ const styles = StyleSheet.create({
   },
 
   menuLabel: { fontSize: 14, fontWeight: "800", color: "#0B1220" },
-  menuSubLabel: { marginTop: 2, fontSize: 12, fontWeight: "600", color: "#6B7280" },
+  menuSubLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
 
   drawerDropdown: {
     marginTop: 2,
@@ -980,9 +1024,18 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   cbRow: { marginBottom: 10 },
-  cbIcon: { borderRadius: 8, borderWidth: 2, borderColor: "rgba(46,125,50,0.55)" },
+  cbIcon: {
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: "rgba(46,125,50,0.55)",
+  },
   cbInnerIcon: { borderWidth: 2, borderRadius: 8 },
-  cbText: { textDecorationLine: "none", color: "#374151", fontSize: 13, fontWeight: "600" },
+  cbText: {
+    textDecorationLine: "none",
+    color: "#374151",
+    fontSize: 13,
+    fontWeight: "600",
+  },
 
   divider: {
     height: 1,

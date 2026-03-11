@@ -47,7 +47,7 @@ export default function ProfileScreen() {
         setUser(u);
 
         if (u) {
-          // pull profile (username + avatar_url) + fallback to auth metadata
+          // pull profile table with username + avatar_url + fallback to auth metadata
           const { data: prof, error: profErr } = await supabase
             .from("profiles")
             .select("username, avatar_url")
@@ -85,10 +85,10 @@ export default function ProfileScreen() {
     };
   }, []);
 
+  // for saving the profile info
   const handleSave = async () => {
     if (!user) return;
 
-    // Only username is saved in your current logic; keep it that way (no surprises)
     if (!username.trim()) {
       Alert.alert("Required", "Username cannot be empty.");
       return;
@@ -179,13 +179,13 @@ export default function ProfileScreen() {
 
       if (profErr) throw profErr;
 
-      // keep auth metadata in sync
+      // keep the data synch
       const { error: metaErr } = await supabase.auth.updateUser({
         data: { ...user.user_metadata, avatar_url: publicUrl },
       });
       if (metaErr) throw metaErr;
 
-      // update local user state
+      // for profile update locally
       setUser((prev) =>
         prev
           ? { ...prev, user_metadata: { ...(prev.user_metadata || {}), avatar_url: publicUrl } }
@@ -199,27 +199,6 @@ export default function ProfileScreen() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const confirmSignOut = () => {
-    Alert.alert("Sign out?", "You will be logged out of your account.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign out",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            setBusy(true);
-            const { error } = await supabase.auth.signOut();
-            if (error) throw error;
-          } catch (e) {
-            Alert.alert("Error", e?.message || "Failed to sign out.");
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
   };
 
   if (busy && !user) {
@@ -244,7 +223,7 @@ export default function ProfileScreen() {
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        {/* Avatar Card */}
+        {/* avatar Card */}
         <View style={styles.avatarCard}>
           <View style={styles.avatarWrap}>
             <Image source={{ uri: avatarUri }} style={styles.avatar} />
@@ -266,7 +245,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Details Card */}
+        {/* details Card */}
         <View style={styles.card}>
           <View style={styles.cardTopRow}>
             <Text style={styles.cardTitle}>Account details</Text>
@@ -294,7 +273,7 @@ export default function ProfileScreen() {
             placeholder="Enter username"
           />
 
-          {/* Contact Number (display only, editable UI allowed but not saved to DB in this code) */}
+          {/* Contact Number */}
           <Field
             icon="call-outline"
             label="Contact Number"
@@ -305,7 +284,7 @@ export default function ProfileScreen() {
             keyboardType="phone-pad"
           />
 
-          {/* Email (display only, editing UI allowed but not saved) */}
+          {/* Email */}
           <Field
             icon="mail-outline"
             label="Email Address"
@@ -323,7 +302,7 @@ export default function ProfileScreen() {
                 activeOpacity={0.9}
                 style={[styles.actionBtn, styles.actionGhost]}
                 onPress={() => {
-                  // revert basic fields to current user values (safe)
+                  // revert basic fields to current user values
                   setUsername(user?.user_metadata?.username || username);
                   setEmail(user?.email || email);
                   setContactNumber(user?.user_metadata?.contact_number || contactNumber);
@@ -353,7 +332,7 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* Busy overlay (when user exists) */}
+        {/* Busy overlay  */}
         {busy && (
           <View style={styles.busyOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color="#2563EB" />
@@ -364,7 +343,7 @@ export default function ProfileScreen() {
   );
 }
 
-/* ======= small reusable field (same file, no extra components) ======= */
+/* small reusable field (same file, no extra components) */
 function Field({
   icon,
   label,

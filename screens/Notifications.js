@@ -9,45 +9,91 @@ import {
 } from "react-native";
 import { SensorContext } from "../context/SensorContext";
 import * as ExpoNotifications from "expo-notifications";
-import * as FileSystem from "expo-file-system";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../lib/supabase";
+import useLanguage from "../hooks/useLanguage";
 
-// --- Create notification channel ---
-const createNotificationChannel = async () => {
-  if (Platform.OS === "android") {
-    const soundFile = "alert.mp3"; 
-    await ExpoNotifications.setNotificationChannelAsync("alerts", {
-      name: "Alerts",
-      importance: ExpoNotifications.AndroidImportance.HIGH,
-      sound: soundFile,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#FF231F7C",
-    });
-  }
-};
-
+/* NOTIFICATION HANDLER - MUST show alert for lock screen / banner */
 ExpoNotifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: true,
+    shouldShowAlert: true,
     shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowAlert: false,
+    shouldSetBadge: false,
   }),
 });
 
+/* PERMISSION + ANDROID CHANNEL (VIBRATION ENABLED) */
+const setupNotifications = async () => {
+  try {
+    const { status: existingStatus } =
+      await ExpoNotifications.getPermissionsAsync();
+
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== "granted") {
+      const { status } = await ExpoNotifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== "granted") return false;
+
+    if (Platform.OS === "android") {
+      await ExpoNotifications.setNotificationChannelAsync("alerts", {
+        name: "Alerts",
+        importance: ExpoNotifications.AndroidImportance.HIGH,
+        sound: "default",
+        vibrationPattern: [0, 400, 200, 400], // ✅ STRONG VIBRATION
+        lockscreenVisibility:
+          ExpoNotifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    }
+
+    return true;
+  } catch (e) {
+    console.error("setupNotifications error:", e);
+    return false;
+  }
+};
+
+/* FIRE REAL LOCAL NOTIFICATION (NO TRIGGER ERROR) */
+const fireLocalNotification = async (title, body) => {
+  try {
+    const ok = await setupNotifications();
+    if (!ok) return;
+
+    await ExpoNotifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: "default",
+        channelId: "alerts",
+      },
+      trigger: {
+        type: ExpoNotifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 1,
+        repeats: false,
+      },
+    });
+  } catch (e) {
+    console.error("fireLocalNotification error:", e);
+  }
+};
+
 export default function Notifications() {
+  const { t } = useLanguage();
   const { notifications, setNotifications, selectedSensors } =
     useContext(SensorContext);
+
   const [filteredNotifications, setFilteredNotifications] = useState([]);
   const [userId, setUserId] = useState(null);
 
-  // --- 1️⃣ Load current user ID ---
+  /* LOAD USER */
   useEffect(() => {
     (async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (session?.user?.id) {
         setUserId(session.user.id);
         loadUserNotifications(session.user.id);
@@ -55,66 +101,64 @@ export default function Notifications() {
     })();
   }, []);
 
-  // --- 2️⃣ Load notifications for this user ---
+  /* LOAD STORED NOTIFS */
   const loadUserNotifications = async (uid) => {
     try {
       const stored = await AsyncStorage.getItem(`notifications_${uid}`);
       if (stored) setNotifications(JSON.parse(stored));
     } catch (err) {
-      console.error("Failed to load notifications:", err);
+      console.error("Load notifications error:", err);
     }
   };
 
-  // --- 3️⃣ Save notifications for this user ---
+  /* SAVE NOTIFS */
   const saveUserNotifications = async (data) => {
     if (!userId) return;
     try {
-      await AsyncStorage.setItem(`notifications_${userId}`, JSON.stringify(data));
+      await AsyncStorage.setItem(
+        `notifications_${userId}`,
+        JSON.stringify(data)
+      );
     } catch (err) {
-      console.error("Failed to save notifications:", err);
+      console.error("Save notifications error:", err);
     }
   };
 
+  /* INIT NOTIFS */
   useEffect(() => {
-    createNotificationChannel();
+    setupNotifications();
   }, []);
 
-  // --- 4️⃣ Filter and schedule notifications ---
+  /* FILTER + FIRE OS NOTIFS */
   useEffect(() => {
     if (!userId) return;
 
     const filtered = notifications.filter(
-      (notif) => notif.type && selectedSensors[notif.type]
+      (notif) => notif.type && selectedSensors?.[notif.type]
     );
+
     setFilteredNotifications(filtered);
 
-    filtered.forEach(async (notif) => {
-      if (!notif.sent) {
-        try {
-          await ExpoNotifications.scheduleNotificationAsync({
-            content: {
-              title: notif.title,
-              body: notif.message,
-              sound: "default",
-            },
-            trigger: null,
-            channelId: "alerts",
-          });
+    (async () => {
+      const unsent = filtered.filter((n) => !n.sent);
+      if (unsent.length === 0) return;
 
-          const updated = notifications.map((n) =>
-            n.id === notif.id ? { ...n, sent: true } : n
-          );
-          setNotifications(updated);
-          saveUserNotifications(updated);
-        } catch (err) {
-          console.error("Notification schedule error:", err);
-        }
+      for (const notif of unsent) {
+        await fireLocalNotification(notif.title, notif.message);
       }
-    });
+
+      const updated = notifications.map((n) =>
+        unsent.some((u) => u.id === n.id) ? { ...n, sent: true } : n
+      );
+
+      setNotifications(updated);
+      saveUserNotifications(updated);
+    })();
   }, [notifications, selectedSensors, userId]);
 
+  /* ACTIONS */
   const dismissNotification = (id) => {
-    const updated = notifications.filter((notif) => notif.id !== id);
+    const updated = notifications.filter((n) => n.id !== id);
     setNotifications(updated);
     saveUserNotifications(updated);
   };
@@ -124,6 +168,7 @@ export default function Notifications() {
     saveUserNotifications([]);
   };
 
+  /* UI */
   const renderItem = ({ item }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
@@ -142,17 +187,21 @@ export default function Notifications() {
       {filteredNotifications.length > 0 && (
         <View style={styles.header}>
           <TouchableOpacity onPress={clearAll}>
-            <Text style={styles.clearAll}>Clear All</Text>
+            <Text style={styles.clearAll}>
+              {t?.clearAll ?? "Clear all"}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
 
       {filteredNotifications.length === 0 ? (
-        <Text style={styles.emptyText}>No notifications at the moment.</Text>
+        <Text style={styles.emptyText}>
+          {t?.noNotifications ?? "No notifications"}
+        </Text>
       ) : (
         <FlatList
           data={filteredNotifications}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={(item) => String(item.id)}
           renderItem={renderItem}
         />
       )}
@@ -160,15 +209,21 @@ export default function Notifications() {
   );
 }
 
+/* STYLES */
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, backgroundColor: "#fff" },
   header: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 15 },
-  clearAll: { fontSize: 14, color: "black", fontWeight: "bold" },
+  clearAll: { fontSize: 14, fontWeight: "bold" },
   emptyText: { textAlign: "center", marginTop: 30, fontSize: 16, color: "#666" },
-  card: { backgroundColor: "#cfe8d5", borderRadius: 15, padding: 15, marginBottom: 12 },
+  card: {
+    backgroundColor: "#cfe8d5",
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 12,
+  },
   cardHeader: { flexDirection: "row", alignItems: "center" },
-  cardTitle: { fontSize: 16, fontWeight: "bold", flex: 1, color: "#000" },
+  cardTitle: { fontSize: 16, fontWeight: "bold", flex: 1 },
   time: { fontSize: 14, color: "#333", marginRight: 8 },
-  closeBtn: { fontSize: 18, color: "#000", paddingLeft: 7 },
-  message: { fontSize: 15, color: "#000", marginTop: 6 },
+  closeBtn: { fontSize: 18, paddingLeft: 7 },
+  message: { fontSize: 15, marginTop: 6 },
 });

@@ -25,6 +25,11 @@ import { SensorProvider } from "./context/SensorContext";
 import { Asset } from "expo-asset";
 import { supabase } from "./lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LanguageProvider } from "./context/LanguageContext";
+
+
+import * as Linking from "expo-linking";
+import { navigationRef } from "./navigation/navigationRef";
 
 const Stack = createNativeStackNavigator();
 const Drawer = createDrawerNavigator();
@@ -180,8 +185,9 @@ useEffect(() => {
     );
   }
   return (
+    <LanguageProvider>
     <SensorProvider>
-      <NavigationContainer>
+      <NavigationContainer  ref={navigationRef}>
         <Stack.Navigator
           initialRouteName={initialRoute} // <-- Set the first screen dynamically
           screenOptions={{ headerShown: false }}
@@ -199,6 +205,7 @@ useEffect(() => {
         </Stack.Navigator>
       </NavigationContainer>
     </SensorProvider>
+    </LanguageProvider>
   );
 }
 

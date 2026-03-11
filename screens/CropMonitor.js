@@ -37,7 +37,7 @@ const [activeDevice, setActiveDevice] = useState(null); // Store the active devi
 
 const isConfigured = activeDevice && deviceStatus === "Active";
 
-  // --- Send relay command via relay_commands table ---
+  // Send relay command via relay_commands table
   const triggerRelay = async (state = "ON") => {
     try {
       const {
@@ -63,7 +63,7 @@ const isConfigured = activeDevice && deviceStatus === "Active";
     }
   };
 
-  // --- Fetch weather data ---
+  //  Fetch weather data
   const fetchWeather = async () => {
     try {
       const apiKey = "bd96cb9d18e16f8796d773ef208270be";
@@ -80,7 +80,7 @@ const isConfigured = activeDevice && deviceStatus === "Active";
     }
   };
 
-  // --- Fetch latest sensor + tank data ---
+  //  Fetch latest sensor + tank data 
 const fetchSensorData = async (auto = false) => {
   if (deviceStatus !== "Active") {
     console.log("Device is inactive — skipping sensor fetch");
@@ -177,7 +177,7 @@ const fetchSensorData = async (auto = false) => {
       return [...unique, ...prev];
     });
 
-    // --- Weighted score calculation ---
+    //  Weighted score calculation 
     const soilNorm = Math.min((mergedData.soil / 30) * 0.6, 1);
     const tempNorm = Math.min((mergedData.temperature / 32) * 0.64, 1);
     const humidityNorm = Math.min((mergedData.humidity / 60) * 0.6, 1);
@@ -209,7 +209,7 @@ const fetchSensorData = async (auto = false) => {
       relayState = "OFF";
     }
 
-    // --- Rain/weather override ---
+    //  Rain/weather override
     const rainSensorWet =
       typeof mergedData.rain === "string" &&
       mergedData.rain.toLowerCase().includes("rain") &&
@@ -233,10 +233,9 @@ const fetchSensorData = async (auto = false) => {
       console.log("☀️ No rain detected — proceeding based on soil moisture.");
     }
 
-    // --- Trigger the relay/pump ---
+    //  Trigger the relay/pump 
     await triggerRelay(relayState);
 
-    // --- Update plant status UI ---
     if (!prevPlantStatusRef.current || prevPlantStatusRef.current.status !== status) {
       setPlantStatus({ status, statusColor });
       setLastUpdated(new Date());
@@ -361,7 +360,7 @@ const fetchSensorData = async (auto = false) => {
         data: { session },
       } = await supabase.auth.getSession();
       const userId = session?.user?.id;
-      if (!userId || !activeDevice) return; // <-- important
+      if (!userId || !activeDevice) return; // important
 
       const { data: deviceData, error } = await supabase
         .from("plant_device")
@@ -482,7 +481,7 @@ useEffect(() => {
   };
 
 
-  // --- UI ---
+  //  UI 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {(!sensorData || deviceStatus !== "Active") && !loading && (
@@ -509,11 +508,11 @@ useEffect(() => {
       )}
 
       <Modal
-  transparent
-  animationType="fade"
-  visible={alertModalVisible}
-  onRequestClose={() => setAlertModalVisible(false)}
->
+          transparent
+          animationType="fade"
+          visible={alertModalVisible}
+          onRequestClose={() => setAlertModalVisible(false)}
+      >
   <View style={styles.modalOverlay}>
     <View style={[styles.modalContainer, { width: "70%" }]}>
       <Text style={{ fontSize: 16, textAlign: "center", marginBottom: 15 }}>
@@ -592,7 +591,7 @@ useEffect(() => {
   );
 }
 
-// --- Styles ---
+//  Styles
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
@@ -602,23 +601,23 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: "#2e6b34",
-    paddingVertical: 16, // bigger
+    paddingVertical: 16,
     borderRadius: 25,
-    width: "70%", // slightly wider
+    width: "70%",
     alignItems: "center",
     marginTop: 12,
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" }, // bigger text
-  logo: { width: 140, height: 140, resizeMode: "contain", marginBottom: 20 }, // bigger logo
+  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  logo: { width: 140, height: 140, resizeMode: "contain", marginBottom: 20 }, 
   circleContainer: { alignItems: "center", marginVertical: 25 },
   circleLabel: {
-    fontSize: 18, // bigger
+    fontSize: 18,
     fontWeight: "bold",
     color: "#333",
     marginVertical: -15,
   },
   sectionTitle: {
-    fontSize: 26, // bigger
+    fontSize: 26, 
     fontWeight: "bold",
     marginBottom: 15,
     textAlign: "center",
@@ -629,14 +628,14 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     backgroundColor: "#fff",
     margin: 6,
-    borderRadius: 18, // slightly bigger radius
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    padding: 15, // more padding
+    padding: 15,
     elevation: 4,
   },
   batteryCard: {
-    width: "40%", // bigger
+    width: "40%", 
     backgroundColor: "#37da5fff",
     margin: 6,
     borderRadius: 18,
@@ -644,15 +643,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 8,
   },
-  batteryLabel: { fontSize: 21, color: "#555", textAlign: "center" }, // bigger
+  batteryLabel: { fontSize: 21, color: "#555", textAlign: "center" },
   batteryValue: {
-    fontSize: 28, // bigger
+    fontSize: 28, 
     fontWeight: "bold",
     marginTop: 5,
     color: "#000",
   },
-  cardLabel: { fontSize: 17, color: "#555", textAlign: "center" }, // bigger
-  cardValue: { fontSize: 30, fontWeight: "bold", marginTop: 8, color: "#000" }, // bigger
+  cardLabel: { fontSize: 17, color: "#555", textAlign: "center" }, 
+  cardValue: { fontSize: 30, fontWeight: "bold", marginTop: 8, color: "#000" }, 
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -668,7 +667,7 @@ const styles = StyleSheet.create({
     elevation: 6,
     width: "80%", 
   },
-  modalTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 18 }, // bigger
+  modalTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 18 }, 
   input: {
     width: "100%",
     height: 45,
@@ -677,7 +676,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     marginBottom: 12,
-    fontSize: 16, // bigger
+    fontSize: 16, 
   },
   pickerWrapper: {
     width: "100%",
@@ -696,7 +695,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  saveButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" }, // bigger
+  saveButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   cancelButton: {
     backgroundColor: "#b71c1c",
     paddingVertical: 12,
@@ -705,13 +704,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  cancelButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" }, // bigger
+  cancelButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" }, 
   helpLink: {
     color: "#2e6b34",
     textAlign: "center",
     textDecorationLine: "underline",
     marginTop: 12,
-    fontSize: 15, // bigger
+    fontSize: 15, 
   },
   guideBox: {
     backgroundColor: "#f5f5f5",
@@ -719,5 +718,5 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 12,
   },
-  guideText: { fontSize: 15, marginBottom: 6, color: "#333" }, // bigger
+  guideText: { fontSize: 15, marginBottom: 6, color: "#333" }, 
 });

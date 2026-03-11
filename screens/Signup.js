@@ -8,10 +8,11 @@ import {
   StyleSheet,
   Alert,
   AppState,
-  Modal,
+  Modal
 } from "react-native";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import { supabase } from "../lib/supabase";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 export default function SignupScreen({ navigation }) {
   const [username, setUsername] = useState("");
@@ -23,8 +24,7 @@ export default function SignupScreen({ navigation }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successModalVisible, setSuccessModalVisible] = useState(false);
-  const PLACEHOLDER_AVATAR =
-    "https://vesmleiliahbfqpcjtix.supabase.co/storage/v1/object/public/avatars/avatars/placeholder.png";
+  const PLACEHOLDER_AVATAR = "https://vesmleiliahbfqpcjtix.supabase.co/storage/v1/object/public/avatars/avatars/placeholder.png";
 
   // validation errors
   const [errors, setErrors] = useState({});
@@ -74,7 +74,7 @@ export default function SignupScreen({ navigation }) {
 
     setLoading(true);
     try {
-      // 1. Check if username exists
+      // checking if username exists
       const { data: existingUser, error: usernameCheckError } = await supabase
         .from("profiles")
         .select("id")
@@ -92,12 +92,12 @@ export default function SignupScreen({ navigation }) {
         return;
       }
 
-      // 2. Create account
+      // creation of account
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { username, avatar_url: PLACEHOLDER_AVATAR },
+          data: { username, avatar_url: PLACEHOLDER_AVATAR, contact_number: contact },
         },
       });
 
@@ -121,22 +121,23 @@ export default function SignupScreen({ navigation }) {
 
       const user = data.user;
       if (!user) {
-        // Email confirmation enabled → stop here
+        // email confirmation
         setSuccessModalVisible(true);
         setLoading(false);
         return;
       }
 
-      // 3. Insert into profiles
+      // insetion  into profiles
       const { error: profileError } = await supabase.from("profiles").upsert({
         id: user.id,
         username,
+        contact_number: contact,
         avatar_url: PLACEHOLDER_AVATAR,
         updated_at: new Date().toISOString(),
       });
 
       if (profileError) {
-        // Account is already created in auth.users
+        // if account is created
         setErrors((prev) => ({
           ...prev,
           username:
@@ -150,7 +151,7 @@ export default function SignupScreen({ navigation }) {
     } catch (err) {
       console.error(err);
 
-      //likely a network issue or unexpected server error
+      // if there is a network failure
       setErrors((prev) => ({
         ...prev,
         email: "Something went wrong. Please try again.",
@@ -161,19 +162,35 @@ export default function SignupScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.container}>
-      {/* Back button */}
-      <TouchableOpacity
-        style={styles.backButton}
-        onPress={() => navigation.goBack()}
-      >
-        <Icon name="arrow-back" size={24} color="#000" />
-      </TouchableOpacity>
 
-      <Image source={require("../assets/Oksi.png")} style={styles.logo} />
-      <Text style={styles.subtitle}>Create your Account</Text>
+      <KeyboardAwareScrollView
+          style={{ flex: 1, backgroundColor: "#fff" }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingBottom: 120, 
+          }}
+          enableOnAndroid={true}
+          enableAutomaticScroll={true}
+          extraScrollHeight={120}   
+          keyboardOpeningTime={0}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+        <View style={styles.innerContainer}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Icon name="arrow-back" size={24} color="#000" />
+          </TouchableOpacity>
 
-      {/* Inputs */}
+          <Image
+            source={require("../assets/Oksi.png")}
+            style={styles.logo}
+          />
+          <Text style={styles.subtitle}>Create your Account</Text>
+
+      {/* login inputs */}
       <View
         style={[
           styles.inputContainer,
@@ -284,9 +301,8 @@ export default function SignupScreen({ navigation }) {
           {loading ? "Signing up..." : "Sign Up"}
         </Text>
       </TouchableOpacity>
-
-      {}
-      <Modal
+    </View>
+     <Modal
         transparent={true}
         animationType="fade"
         visible={successModalVisible}
@@ -294,7 +310,6 @@ export default function SignupScreen({ navigation }) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Sign Up Successful!</Text>
-            {}
 
             <TouchableOpacity
               style={[
@@ -311,11 +326,20 @@ export default function SignupScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-    </View>
+    </KeyboardAwareScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContainer: {
+  paddingBottom: 40,
+},
+innerContainer: {
+  alignItems: "center",
+  paddingHorizontal: 20,
+  paddingTop: 10,
+  paddingBottom: 20,
+},
   container: {
     flex: 1,
     backgroundColor: "#fff",

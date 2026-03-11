@@ -8,18 +8,27 @@ import {
   StyleSheet,
   AppState,
   Alert,
+  Keyboard 
 } from "react-native";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../lib/supabase";
 import * as WebBrowser from "expo-web-browser";
 import "react-native-url-polyfill/auto";
-
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 WebBrowser.maybeCompleteAuthSession();
 
-
 export default function Login({ navigation, setOtpVerified }) {
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [isForgotModalVisible, setIsForgotModalVisible] = useState(false);
+
+  const MAX_LOGIN_ATTEMPTS = 3;
+  const LOGIN_TIMEOUT_SECONDS = 120;
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -31,10 +40,16 @@ export default function Login({ navigation, setOtpVerified }) {
   const [generatedCode, setGeneratedCode] = useState("");
   const [isCodeModalVisible, setIsCodeModalVisible] = useState(false);
   const [otpError, setOtpError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
 
 
   const hiddenInputRef = useRef(null);
   const [isOtpInfoModalVisible, setIsOtpInfoModalVisible] = useState(false); // NEW
+
+
+  const [loginAttempts, setLoginAttempts] = useState(0);
+  const [isLoginDisabled, setIsLoginDisabled] = useState(false);
+  const [timeoutRemaining, setTimeoutRemaining] = useState(0);
  
   const focusOtpInput = () => {
     if (!hiddenInputRef.current) return;
@@ -44,6 +59,19 @@ export default function Login({ navigation, setOtpVerified }) {
         }, 50);
     };
 
+    useEffect(() => {
+  const { data } = supabase.auth.onAuthStateChange(
+    (event, session) => {
+      if (event === "PASSWORD_RECOVERY" && session) {
+        navigation.replace("PasswordScreen");
+      }
+    }
+  );
+
+  return () => {
+    data.subscription.unsubscribe();
+  };
+}, []);
 
   useEffect(() => {
     if (isCodeModalVisible) {
@@ -54,14 +82,43 @@ export default function Login({ navigation, setOtpVerified }) {
   }, [isCodeModalVisible]);
 
 
-  //NEW - OTP TIMER & RESEND
+  useEffect(() => {
+  if (!isLoginDisabled || timeoutRemaining <= 0) return;
+
+  const timer = setInterval(() => {
+    setTimeoutRemaining(prev => {
+      if (prev <= 1) {
+        setIsLoginDisabled(false);
+        setLoginAttempts(0);
+        return 0;
+      }
+      return prev - 1;
+    });
+  }, 1000);
+
+  return () => clearInterval(timer);
+}, [isLoginDisabled, timeoutRemaining]);
+
+
+  //OTP TIMER & RESEND
   const OTP_VALIDITY_SECONDS = 60;
   const [otpTimer, setOtpTimer] = useState(OTP_VALIDITY_SECONDS);
   const [canResendOtp, setCanResendOtp] = useState(false);
 
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardVisible(true);
+    });
 
- 
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardVisible(false);
+    });
 
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
   if (!isCodeModalVisible) return;
@@ -81,15 +138,6 @@ export default function Login({ navigation, setOtpVerified }) {
   return () => clearInterval(interval);
 }, [isCodeModalVisible, otpTimer]);
 
-
-
-
-  const [isForgotModalVisible, setIsForgotModalVisible] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotError, setForgotError] = useState("");
-  const [forgotMessage, setForgotMessage] = useState("");
-
-
   // AppState refresh
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -98,7 +146,6 @@ export default function Login({ navigation, setOtpVerified }) {
     });
     return () => subscription.remove();
   }, []);
-
 
   // Reset OTP and check session
   useEffect(() => {
@@ -138,54 +185,111 @@ export default function Login({ navigation, setOtpVerified }) {
     return Object.keys(newErrors).length === 0;
   };
 
+  const validateCredentials = async () => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: username,
+    password: password,
+  });
 
-  // Step 1: Send OTP without logging in
-  // Step 1: Send OTP
+  if (error || !data?.session) {
+    return false;
+  }
+
+  // Immediately sign out — OTP will control final login
+  await supabase.auth.signOut();
+  return true;
+};
+
+  // Send OTP
   const handleSendOTP = async () => {
-    setOtpTimer(OTP_VALIDITY_SECONDS);
-    setCanResendOtp(false);
-    setVerificationCode("");
+  setOtpTimer(OTP_VALIDITY_SECONDS);
+  setCanResendOtp(false);
+  setVerificationCode("");
 
+  if (!validateForm()) return;
 
-    if (!validateForm()) return;
-    if (!username.includes("@")) {
-      setErrors({ general: "Please enter a valid email address." });
-      return;
-    }
+  setLoading(true);
 
+  try {
+    // validate credentials
+    const isValid = await validateCredentials();
 
-    setLoading(true);
-    try {
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedCode(code);
+    if (!isValid) {
+  const attempts = loginAttempts + 1;
+  setLoginAttempts(attempts);
 
+  if (attempts >= MAX_LOGIN_ATTEMPTS) {
+    setIsLoginDisabled(true);
+    setTimeoutRemaining(LOGIN_TIMEOUT_SECONDS);
+    setErrors({
+      general: `Too many failed attempts.`,
+    });
+  } else {
+    setErrors({
+      general: `Invalid email or password.`,
+    });
+  }
 
-      const response = await fetch(
-        "https://vesmleiliahbfqpcjtix.functions.supabase.co/send-code",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: username, code }),
-        },
-      );
-      const result = await response.json();
+  setLoading(false);
+  return;
+}
 
+    // Generate & send OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedCode(code);
 
-      if (result.success) {
-        setIsOtpInfoModalVisible(true); // Show OTP info modal instead of alert
-      } else {
-        setErrors({
-          general: "Failed to send verification code. Please try again.",
-        });
+    const response = await fetch(
+      "https://vesmleiliahbfqpcjtix.functions.supabase.co/send-code",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: username, code }),
       }
-    } catch (err) {
-      console.error(err);
-      setErrors({ general: "Network error. Please try again later." });
-    } finally {
-      setLoading(false);
-    }
-  };
+    );
 
+    const result = await response.json();
+
+    if (result.success) {
+      setIsOtpInfoModalVisible(true);
+    } else {
+      setErrors({ general: "Failed to send verification code." });
+    }
+
+  } catch (err) {
+    setErrors({ general: "Network error. Please try again." });
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleForgotPassword = async () => {
+  if (!forgotEmail) {
+    setForgotError("Please enter your email.");
+    return;
+  }
+
+  setForgotError("");
+  setForgotSuccess("");
+
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    forgotEmail,
+    {
+      redirectTo: "oksi://reset-password",
+    }
+  );
+
+  if (error) {
+    setForgotError(error.message);
+    return;
+  }
+
+  setForgotSuccess("A password reset link has been sent to your email.");
+
+  setTimeout(() => {
+    setIsForgotModalVisible(false);
+    setForgotSuccess("");
+  }, 3000);
+};
 
   const handleVerifyOTPAndSignIn = async () => {
     if (verificationCode !== generatedCode) {
@@ -207,8 +311,6 @@ export default function Login({ navigation, setOtpVerified }) {
 
       if (error || !session?.user) {
         setErrors({ general: "Invalid email or password." });
-
-
         setIsCodeModalVisible(false);
         setVerificationCode("");
         setGeneratedCode("");
@@ -216,11 +318,12 @@ export default function Login({ navigation, setOtpVerified }) {
         return;
       }
 
-
-      // OTP verified
       setOtpVerified(true);
       await AsyncStorage.setItem("otpVerified", "true");
-
+      
+      setLoginAttempts(0);
+      setIsLoginDisabled(false);
+      setTimeoutRemaining(0);
 
       navigation.replace("MainApp");   }
       catch (err) {
@@ -229,25 +332,25 @@ export default function Login({ navigation, setOtpVerified }) {
         setLoading(false);
    
       };
-     
-     
-    // After setting OTP verified and checking welcome
-    console.log("===== LOGIN FLOW =====");
-    console.log("Generated OTP:", generatedCode);
-    console.log("Entered OTP:", verificationCode);
-    console.log("OTP verified:", true);
-    console.log("hasSeenWelcome in storage before navigation:", hasSeenWelcome);
   };
 
-
- 
-
-
   return (
-    <View style={styles.container}>
+<KeyboardAwareScrollView
+          style={{ flex: 1, backgroundColor: "#fff" }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingBottom: 120, 
+          }}
+          enableOnAndroid={true}
+          enableAutomaticScroll={true}
+          extraScrollHeight={125}   
+          keyboardOpeningTime={0}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+    <View style={styles.innerContainer}>
       <Image source={require("../assets/Oksi.png")} style={styles.logo} />
-      <Text style={styles.subtitle}>Sign in to your account</Text>
-
+      <Text style={styles.messagesubtitle}>Sign in to your account</Text>
 
       {/* Email */}
       <View
@@ -270,7 +373,6 @@ export default function Login({ navigation, setOtpVerified }) {
       {errors.username && (
         <Text style={styles.errorText}>{errors.username}</Text>
       )}
-
 
       {/* Password */}
       <View
@@ -301,29 +403,61 @@ export default function Login({ navigation, setOtpVerified }) {
       )}
       {errors.general && <Text style={styles.errorText}>{errors.general}</Text>}
 
-
       {/* Forgot Password */}
-      <TouchableOpacity onPress={() => setIsForgotModalVisible(true)}>
+      <TouchableOpacity
+        onPress={() => {
+          setForgotEmail("");
+          setForgotError("");
+          setIsForgotModalVisible(true);
+        }}
+      >
         <Text style={styles.forgot}>Forgot your password?</Text>
       </TouchableOpacity>
 
-
       {/* Sign In */}
       <TouchableOpacity
-        style={styles.button}
+        style={[
+          styles.button,
+          isLoginDisabled && { opacity: 0.5 },
+        ]}
         onPress={handleSendOTP}
-        disabled={loading}
+        disabled={loading || isLoginDisabled}
       >
         <Text style={styles.buttonText}>
-          {loading ? "Sending..." : "Sign in"}
+          {isLoginDisabled
+            ? `Try again in ${timeoutRemaining}s`
+            : loading
+            ? "Signing in..."
+            : "Sign in"}
         </Text>
       </TouchableOpacity>
 
+      <Text style={styles.signupText}>
+        Don’t have an account?{" "}
+        <Text
+          style={styles.signupLink}
+          onPress={() => navigation.navigate("Signup")}
+        >
+          Sign up here
+        </Text>
+      </Text>
 
-      {/* OTP Info Modal */}
+
+      <Text style={styles.signupText}>
+        <Text>
+        </Text>
+      </Text>
+
+  </View>
+
+        {/* OTP Info Modal */}
       {isOtpInfoModalVisible && (
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.container}>
+        <View style={[
+            modalStyles.overlay,
+            keyboardVisible && { justifyContent: "flex-start", paddingTop: 300 }
+          ]}
+        >
+        <View style={modalStyles.container}>
             <Text style={modalStyles.title}>OTP Sent</Text>
             <Text style={modalStyles.subtitle}>
               A verification code has been sent to {username}.
@@ -331,13 +465,13 @@ export default function Login({ navigation, setOtpVerified }) {
             <TouchableOpacity
               style={modalStyles.button}
               onPress={() => {
-                 setVerificationCode("");          // clear old OTP
+                 setVerificationCode("");          
                  setOtpError("");
-                 setErrors({});                    // clear errors
-                 setOtpTimer(OTP_VALIDITY_SECONDS); // reset timer
-                 setCanResendOtp(false);           // disable resend
-                 setIsOtpInfoModalVisible(false);  // close info modal
-                 setIsCodeModalVisible(true);      // Open OTP verification modal
+                 setErrors({});                
+                 setOtpTimer(OTP_VALIDITY_SECONDS); 
+                 setCanResendOtp(false);          
+                 setIsOtpInfoModalVisible(false);
+                 setIsCodeModalVisible(true);      
               }}
             >
               <Text style={modalStyles.buttonText}>Proceed</Text>
@@ -346,11 +480,14 @@ export default function Login({ navigation, setOtpVerified }) {
         </View>
       )}
 
-
-      {/* OTP Verification Modal */}
+  {/* OTP Verification Modal */}
       {isCodeModalVisible && (
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.container}>
+        <View style={[
+            modalStyles.overlay,
+            keyboardVisible && { justifyContent: "flex-start", paddingTop: 300 }
+          ]}
+        >
+        <View style={modalStyles.container}>
             <Text style={modalStyles.title}>Enter Login Verification Code</Text>
             <Text style={modalStyles.subtitle}>
               Access your email to view the code
@@ -374,20 +511,12 @@ export default function Login({ navigation, setOtpVerified }) {
               </View>
             </TouchableOpacity>
 
-
-
-
           {/* OTP ERROR MESSAGE */}
               {otpError ? (
                 <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>
                   {otpError}
                 </Text>
               ) : null}
-
-
-
-
-
 
           {/* Hidden input */}
           <TextInput
@@ -401,15 +530,12 @@ export default function Login({ navigation, setOtpVerified }) {
             }}
           />
 
-
-           
             {/* OTP Timer */}
             <Text style={{ fontSize: 12, color: "#555", marginBottom: 10 }}>
               {otpTimer > 0
                 ? `OTP expires in ${otpTimer}s`
                 : "OTP expired"}
             </Text>
-
 
             {/* Resend OTP */}
             {canResendOtp && (
@@ -423,9 +549,6 @@ export default function Login({ navigation, setOtpVerified }) {
               </TouchableOpacity>
             )}
 
-
-
-
             <TouchableOpacity
               style={[
                 modalStyles.button,
@@ -437,9 +560,6 @@ export default function Login({ navigation, setOtpVerified }) {
               <Text style={modalStyles.buttonText}>Verify & Login</Text>
             </TouchableOpacity>
 
-
-
-
             <TouchableOpacity
               onPress={() => setIsCodeModalVisible(false)}
               style={modalStyles.cancelButton}
@@ -450,16 +570,16 @@ export default function Login({ navigation, setOtpVerified }) {
         </View>
       )}
 
-
-      {/* Forgot Password Modal */}
+  {/* Forgot Password Email Input Modal */}
       {isForgotModalVisible && (
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.container}>
-            <Text style={modalStyles.title}>Reset Password</Text>
-            <Text style={modalStyles.subtitle}>
-              Enter your registered email
-            </Text>
-
+        <View style={[
+                  modalStyles.overlay,
+                  keyboardVisible && { justifyContent: "flex-start", paddingTop: 300 }
+                ]}
+              >
+              <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>Forgot Password</Text>
+            <Text style={modalStyles.subtitle}>Enter your registered email</Text>
 
             <TextInput
               style={modalStyles.input}
@@ -469,86 +589,54 @@ export default function Login({ navigation, setOtpVerified }) {
               onChangeText={(text) => {
                 setForgotEmail(text);
                 setForgotError("");
-                setForgotMessage("");
+                
               }}
               autoCapitalize="none"
               keyboardType="email-address"
             />
+            
+            {forgotError && <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>{forgotError}</Text>}
+            {forgotSuccess && (< Text style={{ color: "green", fontSize: 12, marginBottom: 10, textAlign: "center",}}>{forgotSuccess}</Text>)}
 
-
-            {forgotError && (
-              <Text style={{ color: "red", fontSize: 12, marginBottom: 8 }}>
-                {forgotError}
-              </Text>
-            )}
-            {forgotMessage && (
-              <Text style={{ color: "green", fontSize: 12, marginBottom: 8 }}>
-                {forgotMessage}
-              </Text>
-            )}
-
-
+          
             <TouchableOpacity
-              style={modalStyles.button}
-              onPress={async () => {
-                if (!forgotEmail) {
-                  setForgotError("Please enter your email address.");
-                  return;
-                }
-                try {
-                  const { error } = await supabase.auth.resetPasswordForEmail(
-                    forgotEmail,
-                    {
-                      redirectTo: "oksi://reset-password",
-                    },
-                  );
-                  if (error) setForgotError(error.message);
-                  else
-                    setForgotMessage(
-                      "Password reset email sent! Check your inbox.",
-                    );
-                } catch (err) {
-                  setForgotError("Failed to send reset link. Try again later.");
-                }
-              }}
-            >
-              <Text style={modalStyles.buttonText}>Send Reset Link</Text>
-            </TouchableOpacity>
-
-
-            <TouchableOpacity
-              onPress={() => setIsForgotModalVisible(false)}
-              style={modalStyles.cancelButton}
-            >
-              <Text style={modalStyles.cancelText}>Cancel</Text>
+                style={modalStyles.button}
+                onPress={handleForgotPassword}
+              >
+                <Text style={modalStyles.buttonText}>
+                  Send Reset Link
+                </Text>
             </TouchableOpacity>
           </View>
         </View>
-      )}
+        )}
 
 
-      <Text style={styles.signupText}>
-        Don’t have an account?{" "}
-        <Text
-          style={styles.signupLink}
-          onPress={() => navigation.navigate("Signup")}
-        >
-          Sign up here
-        </Text>
-      </Text>
-    </View>
+</KeyboardAwareScrollView>
   );
 }
 
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
+innerContainer: {
+  flex: 1,
+  alignItems: "center",
+  paddingHorizontal: 20,
+  paddingTop: 100, 
+  paddingBottom: 20,
+  backgroundColor: "#ffffff",
+},
+
+container: {
+  flexGrow: 1,
+  backgroundColor: "#ffffff",
+  alignItems: "center",
+  paddingHorizontal: 20,
+  paddingTop: 100,
+},
+  
+  messagesubtitle: { fontSize: 14, marginBottom: 15, color: "#2e6b34", fontWeight: "bold" },
+
   logo: { width: 200, height: 200, resizeMode: "contain", marginBottom: 20 },
   subtitle: { fontSize: 14, color: "#444", marginBottom: 20 },
   inputContainer: {
@@ -584,7 +672,6 @@ const styles = StyleSheet.create({
   signupText: { fontSize: 12, color: "#555" },
   signupLink: { color: "#2e6b34", fontWeight: "bold" },
 });
-
 
 const modalStyles = StyleSheet.create({
   overlay: {
@@ -627,11 +714,7 @@ const modalStyles = StyleSheet.create({
   buttonText: { color: "#fff", fontWeight: "bold" },
   cancelButton: { marginTop: 10 },
   cancelText: { color: "red" },
-
-
- 
 });
-
 
 const otpStyles = StyleSheet.create({
   container: {
@@ -660,6 +743,4 @@ const otpStyles = StyleSheet.create({
     opacity: 0,
   },
 });
-
-
 
