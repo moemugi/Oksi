@@ -27,9 +27,12 @@ export default function ProfileScreen() {
   const [contactNumber, setContactNumber] = useState("");
   const [email, setEmail] = useState("");
 
+  
+
   const avatarUri = useMemo(() => {
     return user?.user_metadata?.avatar_url || "https://placekitten.com/200/200";
   }, [user]);
+  
 
   useEffect(() => {
     let mounted = true;
@@ -47,17 +50,16 @@ export default function ProfileScreen() {
         setUser(u);
 
         if (u) {
-          // pull profile table with username + avatar_url + fallback to auth metadata
           const { data: prof, error: profErr } = await supabase
             .from("profiles")
-            .select("username, avatar_url")
+            .select("username, avatar_url, contact_number")
             .eq("id", u.id)
             .single();
 
           if (!mounted) return;
 
           const uname = prof?.username ?? u.user_metadata?.username ?? "";
-          const contact = u.user_metadata?.contact_number ?? "";
+          const contact = prof?.contact_number ?? "";
           const mail = u.email ?? "";
 
           setUsername(uname || "");
@@ -85,13 +87,55 @@ export default function ProfileScreen() {
     };
   }, []);
 
+
+  const [usernameError, setUsernameError] = useState("");
+  const [contactError, setContactError] = useState("");
+  const [emailError, setEmailError] = useState("");
+
+  const validateFields = () => {
+    let valid = true;
+
+    // Username validation (max 15 already handled by input)
+    setUsernameError(""); 
+
+    // Contact number: numbers only
+    if (contactNumber && !/^\d+$/.test(contactNumber)) {
+      setContactError("Contact number must contain digits only");
+      valid = false;
+    } else {
+      setContactError("");
+    }
+
+    // Email validation
+    if (
+      email &&
+      !/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(email)
+    ) {
+      setEmailError("Enter a valid email address");
+      valid = false;
+    } else {
+      setEmailError("");
+    }
+
+    return valid;
+  };
+
   // for saving the profile info
   const handleSave = async () => {
     if (!user) return;
 
-    if (!username.trim()) {
-      Alert.alert("Required", "Username cannot be empty.");
+    const valid = validateFields();
+    if (!valid) {
+      // Stop saving if any field is invalid
+      Alert.alert("Invalid input", "Please fix the errors before saving.");
       return;
+    }
+
+    if (!username.trim()) {
+      setUsernameError("Username cannot be empty");
+      return;
+    } else {
+      setUsernameError("");
     }
 
     setBusy(true);
@@ -102,6 +146,7 @@ export default function ProfileScreen() {
           {
             id: user.id,
             username: username.trim(),
+            contact_number: contactNumber.trim(), // <--- add this
             updated_at: new Date().toISOString(),
           },
           { onConflict: "id" }
@@ -109,11 +154,19 @@ export default function ProfileScreen() {
 
       if (profErr) throw profErr;
 
-      Alert.alert("Saved", "Username updated successfully.");
+      Alert.alert("Saved", "Profile updated successfully.");
       setEditing(false);
+      setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            user_metadata: { ...(prev.user_metadata || {}), contact_number: contactNumber.trim() },
+          }
+        : prev
+      );
     } catch (e) {
       console.error("Update profile error:", e);
-      Alert.alert("Error", e?.message || "Failed to update username.");
+      Alert.alert("Error", e?.message || "Failed to update profile.");
     } finally {
       setBusy(false);
     }
@@ -264,15 +317,18 @@ export default function ProfileScreen() {
           </View>
 
           {/* Username */}
-          <Field
-            icon="person-outline"
-            label="Username"
-            value={username}
-            editing={editing}
-            onChangeText={setUsername}
-            placeholder="Enter username"
-          />
-
+            <Field
+              icon="person-outline"
+              label="Username"
+              value={username}
+              editing={editing}
+              onChangeText={(text) => {
+                if (text.length <= 15) setUsername(text);
+              }}
+              placeholder="Enter username"
+              maxLength={15}
+              showCounter={true}  // this enables the 0/15 counter
+            />
           {/* Contact Number */}
           <Field
             icon="call-outline"
@@ -281,7 +337,10 @@ export default function ProfileScreen() {
             editing={editing}
             onChangeText={setContactNumber}
             placeholder="Enter contact number"
-            keyboardType="phone-pad"
+            keyboardType="default"
+            errorText={contactError}
+            maxLength={11}   
+            showCounter={true}   
           />
 
           {/* Email */}
@@ -294,6 +353,7 @@ export default function ProfileScreen() {
             placeholder="Enter email"
             keyboardType="email-address"
             autoCapitalize="none"
+            errorText={emailError}
           />
 
           {editing && (
@@ -353,6 +413,9 @@ function Field({
   placeholder,
   keyboardType,
   autoCapitalize,
+  maxLength,
+  errorText,   // for Contact / Email
+  showCounter, // for Username
 }) {
   return (
     <View style={styles.field}>
@@ -364,15 +427,43 @@ function Field({
       </View>
 
       {editing ? (
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor="#94A3B8"
-          style={styles.input}
-          keyboardType={keyboardType}
-          autoCapitalize={autoCapitalize}
-        />
+        <View style={{ position: "relative" }}>
+          <TextInput
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            placeholderTextColor="#94A3B8"
+            style={[
+              styles.input,
+              // { borderColor: errorText || (showCounter && value.length === maxLength) ? "#DC2626" : "rgba(15,23,42,0.10)" },
+              showCounter && { paddingRight: 50 }, // space for counter
+            ]}
+            keyboardType={keyboardType}
+            autoCapitalize={autoCapitalize}
+            maxLength={maxLength}
+          />
+
+          {showCounter && (
+            <Text
+              style={{
+                position: "absolute",
+                right: 12,
+                top: "50%",
+                transform: [{ translateY: -8 }],
+                fontSize: 12,
+                color: value.length === maxLength ? "#DC2626" : "#6B7280",
+              }}
+            >
+              {value.length}/{maxLength}
+            </Text>
+          )}
+
+          {errorText ? (
+            <Text style={{ color: "#DC2626", fontSize: 12, marginTop: 4 }}>
+              {errorText}
+            </Text>
+          ) : null}
+        </View>
       ) : (
         <Text style={styles.fieldValue}>{value || "—"}</Text>
       )}
