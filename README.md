@@ -21,3 +21,8 @@
 - Icon in the nav bar with name only appears in home
 - Created guides for user in connecting to esp 32 (planning to migrate to bare react native for wifi settings)
 - 2 tabs left (Notification and Statistics)
+
+3/7/25
+
+Applicable fields validation
+Reports template fix
