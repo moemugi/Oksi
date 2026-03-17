@@ -21,7 +21,6 @@ WebBrowser.maybeCompleteAuthSession();
 
 export default function Login({ navigation, setOtpVerified }) {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotError, setForgotError] = useState("");
   const [isForgotModalVisible, setIsForgotModalVisible] = useState(false);
