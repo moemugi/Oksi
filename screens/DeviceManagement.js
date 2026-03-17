@@ -966,15 +966,35 @@ export default function DeviceManagementScreen() {
               <Text style={styles.detailsTitle}>{activeDevice.name}</Text>
 
               <Text style={styles.inputLabel}>{t.devicerenamelabel}</Text>
-              <TextInput
-                style={styles.textInput}
-                value={renameText}
-                onChangeText={setRenameText}
-                placeholder="Enter new device name"
-                placeholderTextColor="#9CA3AF"
-                editable={String(activeDevice.status).toLowerCase() === "active"}
-              />
+              
+                <View style={{ position: "relative" }}>
+                  <TextInput
+                    style={[styles.textInput, { paddingRight: 50 }]}
+                    value={renameText}
+                    onChangeText={(text) => {
+                      if (text.length <= 15) {
+                        setRenameText(text);
+                      }
+                    }}
+                    placeholder="Enter new device name"
+                    placeholderTextColor="#9CA3AF"
+                    editable={String(activeDevice.status).toLowerCase() === "active"}
+                    maxLength={15}
+                  />
 
+                  <Text
+                    style={{
+                      position: "absolute",
+                      right: 12,
+                      top: "50%",
+                      transform: [{ translateY: -8 }],
+                      fontSize: 12,
+                      color: renameText.length === 15 ? "#DC2626" : "#6B7280",
+                    }}
+                  >
+                    {renameText.length}/15
+                  </Text>
+                </View>
               {activeDevice.type === "Plant" && (
                 <>
                   <Info label="Crop" value={activeDevice.crop} />
@@ -1183,13 +1203,34 @@ export default function DeviceManagementScreen() {
               <Text style={styles.detailsTitle}>Add Plant Device</Text>
 
               <Text style={styles.inputLabel}>Device Name</Text>
-              <TextInput
-                style={styles.textInput}
-                value={newDeviceName}
-                onChangeText={setNewDeviceName}
-                placeholder="My Garden Device"
-                placeholderTextColor="#9CA3AF"
-              />
+
+              <View style={{ position: "relative" }}>
+                <TextInput
+                  style={[styles.textInput, { paddingRight: 50 }]}
+                  value={newDeviceName}
+                  onChangeText={(text) => {
+                    if (text.length <= 15) {
+                      setNewDeviceName(text);
+                    }
+                  }}
+                  placeholder="My Garden Device"
+                  placeholderTextColor="#9CA3AF"
+                  maxLength={15}
+                />
+
+                <Text
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    top: "50%",
+                    transform: [{ translateY: -8 }],
+                    fontSize: 12,
+                    color: newDeviceName.length === 15 ? "#DC2626" : "#6B7280",
+                  }}
+                >
+                  {newDeviceName.length}/15
+                </Text>
+              </View>
 
               <Text style={styles.inputLabel}>Crop</Text>
               <View style={styles.pickerWrapper}>
