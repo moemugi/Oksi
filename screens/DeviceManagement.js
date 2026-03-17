@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,10 @@ import {
   Alert,
   Easing,
   RefreshControl,
+  StatusBar,
+  UIManager,
+  findNodeHandle,
+  InteractionManager,
 } from "react-native";
 import { supabase } from "../lib/supabase";
 import { Picker } from "@react-native-picker/picker";
@@ -35,6 +39,7 @@ const CARD_H = 180;
 const stylesTokens = {
   border: "rgba(15,23,42,0.10)",
 };
+
 /* PulseCard */
 const PulseCard = ({ status, children }) => {
   const scale = useRef(new Animated.Value(1)).current;
@@ -69,6 +74,119 @@ const stylesVars = {
   red: "#DC2626",
   amber: "#B45309",
   grayBtn: "#6B7280",
+};
+
+/* ---------------------------
+   Walkthrough Overlay
+---------------------------- */
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+const WalkthroughOverlay = ({
+  visible,
+  step,
+  total,
+  highlight,
+  title,
+  body,
+  onNext,
+  onPrev,
+  onClose,
+}) => {
+  if (!visible || !highlight) return null;
+
+  const { x, y, width, height } = highlight;
+
+  const tooltipW = Math.min(320, SCREEN_WIDTH - 30);
+  const tooltipX = clamp(x + width / 2 - tooltipW / 2, 15, SCREEN_WIDTH - tooltipW - 15);
+
+  const screenH = Dimensions.get("window").height;
+  const preferBelow = y + height + 14 + 140 < screenH; // simple estimate
+  const tooltipY = preferBelow ? y + height + 14 : Math.max(15, y - 14 - 140);
+
+  const arrowSize = 10;
+  const arrowLeft = clamp(x + width / 2 - arrowSize, 10, SCREEN_WIDTH - 10 - arrowSize * 2);
+
+  const arrowStyle = preferBelow
+    ? {
+        position: "absolute",
+        left: arrowLeft,
+        top: y + height + 4,
+        width: 0,
+        height: 0,
+        borderLeftWidth: arrowSize,
+        borderRightWidth: arrowSize,
+        borderBottomWidth: arrowSize,
+        borderLeftColor: "transparent",
+        borderRightColor: "transparent",
+        borderBottomColor: "#FFFFFF",
+      }
+    : {
+        position: "absolute",
+        left: arrowLeft,
+        top: Math.max(0, y - 4 - arrowSize),
+        width: 0,
+        height: 0,
+        borderLeftWidth: arrowSize,
+        borderRightWidth: arrowSize,
+        borderTopWidth: arrowSize,
+        borderLeftColor: "transparent",
+        borderRightColor: "transparent",
+        borderTopColor: "#FFFFFF",
+      };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <StatusBar translucent backgroundColor="rgba(0,0,0,0.35)" barStyle="light-content" />
+      <View style={styles.wtBackdrop}>
+        {/* EXACT highlight box (no padding offsets) */}
+        <View
+          pointerEvents="none"
+          style={[
+            styles.wtHighlightBox,
+            {
+              left: x,
+              top: y,
+              width,
+              height,
+            },
+          ]}
+        />
+
+        {/* Arrow pointing to highlight */}
+        <View pointerEvents="none" style={arrowStyle} />
+
+        {/* Tooltip */}
+        <View style={[styles.wtTooltip, { width: tooltipW, left: tooltipX, top: tooltipY }]}>
+          <View style={styles.wtTooltipTopRow}>
+            <Text style={styles.wtStepText}>
+              Step {step + 1} of {total}
+            </Text>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.8} style={styles.wtCloseBtn}>
+              <Ionicons name="close" size={18} color={stylesVars.text} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.wtTitle}>{title}</Text>
+          <Text style={styles.wtBody}>{body}</Text>
+
+          <View style={styles.wtBtnRow}>
+            <TouchableOpacity
+              onPress={onPrev}
+              activeOpacity={0.9}
+              disabled={step === 0}
+              style={[styles.wtBtn, styles.wtBtnGray, step === 0 && { opacity: 0.5 }]}
+            >
+              <Text style={styles.wtBtnText}>Back</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNext} activeOpacity={0.9} style={[styles.wtBtn, styles.wtBtnBlue]}>
+              <Text style={styles.wtBtnText}>{step === total - 1 ? "Done" : "Next"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 };
 
 export default function DeviceManagementScreen() {
@@ -289,11 +407,11 @@ export default function DeviceManagementScreen() {
           setSkipEmptyStep(false);
         }
       } else {
-        Alert.alert("Error", "ESP32 did not confirm configuration.");
+        Alert.alert("Error", "Device did not confirm configuration.");
       }
     } catch (err) {
       console.log("Config error:", err);
-      Alert.alert("Error", "Could not reach ESP32. Make sure you're connected to its hotspot.");
+      Alert.alert("Error", "Could not reach device. Make sure you're connected to its hotspot.");
     } finally {
       setIsCalibrating(false);
     }
@@ -316,7 +434,7 @@ export default function DeviceManagementScreen() {
           setCalibrationStep(2);
           setCalibrationMessage("Empty calibration done! Fill your tank for full calibration.");
         } else {
-          Alert.alert("Calibration Error", "ESP32 did not confirm empty calibration.");
+          Alert.alert("Calibration Error", "Device did not confirm empty calibration.");
         }
 
         setIsCalibrating(false);
@@ -340,13 +458,13 @@ export default function DeviceManagementScreen() {
           }, 4000);
         } else {
           setIsCalibrating(false);
-          Alert.alert("Calibration Error", "ESP32 did not confirm full calibration.");
+          Alert.alert("Calibration Error", "Device did not confirm full calibration.");
         }
       }
     } catch (error) {
       console.log("Calibration error:", error);
       setIsCalibrating(false);
-      Alert.alert("Calibration Error", "Check your ESP32 connection and try again.");
+      Alert.alert("Calibration Error", "Check your device connection and try again.");
     }
   };
 
@@ -361,12 +479,12 @@ export default function DeviceManagementScreen() {
         setInfoModal({ visible: true, message: "Water container calibrated successfully." });
         setTimeout(fetchDevices, 2500);
       } else {
-        setInfoModal({ visible: true, message: "ESP32 did not confirm calibration." });
+        setInfoModal({ visible: true, message: "Device did not confirm calibration." });
       }
     } catch (error) {}
   };
 
-  /*  list of device*/
+  /* list of device */
   const fetchDevices = async () => {
     if (!userId) return;
     try {
@@ -484,10 +602,7 @@ export default function DeviceManagementScreen() {
   const handleRename = async () => {
     if (!activeDevice) return;
     try {
-      const { error } = await supabase
-        .from(activeDevice.table)
-        .update({ device_name: renameText })
-        .eq("device_id", activeDevice.deviceId);
+      const { error } = await supabase.from(activeDevice.table).update({ device_name: renameText }).eq("device_id", activeDevice.deviceId);
       if (!error) {
         setDevices((prev) => prev.map((d) => (d.id === activeDevice.id ? { ...d, name: renameText } : d)));
         setInfoModal({ visible: true, message: "Device renamed successfully." });
@@ -500,10 +615,7 @@ export default function DeviceManagementScreen() {
   const handleDisconnect = async () => {
     if (!activeDevice) return;
     try {
-      const { error } = await supabase
-        .from(activeDevice.table)
-        .update({ device_status: "Inactive" })
-        .eq("device_id", activeDevice.deviceId);
+      const { error } = await supabase.from(activeDevice.table).update({ device_status: "Inactive" }).eq("device_id", activeDevice.deviceId);
       if (!error) {
         setDevices((prev) => prev.map((d) => (d.id === activeDevice.id ? { ...d, status: "Inactive" } : d)));
         setSelected(null);
@@ -573,7 +685,7 @@ export default function DeviceManagementScreen() {
 
     const success = await configureESP32();
     if (!success) {
-      setInfoModal({ visible: true, message: "Could not reach ESP32. Connect to Oksi-Setup WiFi." });
+      setInfoModal({ visible: true, message: "Could not reach device. Connect to Oksi-Setup WiFi." });
       return;
     }
 
@@ -586,6 +698,145 @@ export default function DeviceManagementScreen() {
     setInfoModal({ visible: true, message: "Device configured successfully. Waiting for device to come online..." });
     setTimeout(fetchDevices, 3000);
   };
+
+  /* FORMAT TIME TO PHILIPPINE TIME */
+  const formatPHTime = (value) => {
+    if (!value) return "N/A";
+
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "N/A";
+
+    return date.toLocaleString("en-PH", {
+      timeZone: "Asia/Manila",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
+  /* =========================================================
+     ✅ WALKTHROUGH (HIGHLIGHT OVERLAY) - EXACT POSITION FIX
+     - uses UIManager.measureInWindow + findNodeHandle
+     - waits for layout/animations (InteractionManager + RAF)
+  ========================================================== */
+  const [walkVisible, setWalkVisible] = useState(false);
+  const [walkStep, setWalkStep] = useState(0);
+  const [walkHighlight, setWalkHighlight] = useState(null);
+
+  // Refs to measure exact positions
+  const refHelpBtn = useRef(null);
+  const refRefreshBtn = useRef(null);
+  const refAddBtn = useRef(null);
+  const refTankBtn = useRef(null);
+  const refFirstDeviceCard = useRef(null);
+
+  const measureRefInWindow = (ref) =>
+    new Promise((resolve) => {
+      try {
+        const node = ref?.current;
+        const handle = node ? findNodeHandle(node) : null;
+
+        if (!handle) return resolve(null);
+
+        UIManager.measureInWindow(handle, (x, y, width, height) => {
+          // guard against zeros (not laid out yet)
+          if (!width || !height) return resolve(null);
+          resolve({ x, y, width, height });
+        });
+      } catch (e) {
+        resolve(null);
+      }
+    });
+
+  const steps = useMemo(() => {
+    return [
+      {
+        key: "refresh",
+        ref: refRefreshBtn,
+        title: "Refresh devices",
+        body: "Use Refresh to update device status and connections.",
+      },
+      {
+        key: "add",
+        ref: refAddBtn,
+        title: "Add Plant Device",
+        body: "Tap here to register a new plant device and send WiFi credentials.",
+      },
+      {
+        key: "tank",
+        ref: refTankBtn,
+        title: "Setup Water Tank",
+        body: "Tap here to calibrate and configure the water tank sensor.",
+      },
+      {
+        key: "card",
+        ref: refFirstDeviceCard,
+        title: "Device cards",
+        body: "Tap any device card to open the details panel (rename, monitor, reconnect, etc.).",
+      },
+    ];
+  }, []);
+
+  const syncHighlight = async (idx) => {
+    const s = steps[idx];
+    if (!s) return;
+
+    setWalkHighlight(null);
+
+    // Wait for any animations / layout to finish
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(async () => {
+          const rect = await measureRefInWindow(s.ref);
+          if (rect) setWalkHighlight(rect);
+        });
+      });
+    });
+  };
+
+  const startWalkthrough = async () => {
+    setWalkStep(0);
+    setWalkVisible(true);
+    setWalkHighlight(null);
+    await syncHighlight(0);
+  };
+
+  const endWalkthrough = () => {
+    setWalkVisible(false);
+    setWalkHighlight(null);
+    setWalkStep(0);
+  };
+
+  const nextStep = async () => {
+    if (walkStep >= steps.length - 1) {
+      endWalkthrough();
+      return;
+    }
+    const n = walkStep + 1;
+    setWalkStep(n);
+    await syncHighlight(n);
+  };
+
+  const prevStep = async () => {
+    if (walkStep <= 0) return;
+    const p = walkStep - 1;
+    setWalkStep(p);
+    await syncHighlight(p);
+  };
+
+  // keep highlight correct when modal opens/closes or list refreshes
+  useEffect(() => {
+    if (!walkVisible) return;
+    syncHighlight(walkStep);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walkVisible, walkStep, devices.length, refreshing, addModal, waterSetupModalVisible, existingCalibrationModalVisible]);
+
+  /* =========================
+     END WALKTHROUGH CODE
+  ========================== */
 
   return (
     <View style={{ flex: 1, backgroundColor: stylesVars.bg }}>
@@ -600,28 +851,46 @@ export default function DeviceManagementScreen() {
             <Text style={styles.subHeader}>{t.activeConnections}</Text>
           </View>
 
-          <TouchableOpacity
-            style={[styles.refreshBtn, refreshing && { opacity: 0.7 }]}
-            onPress={handleRefresh}
-            disabled={refreshing}
-            activeOpacity={0.85}
-          >
-            {refreshing ? (
-              <ActivityIndicator size="small" color={stylesVars.green} />
-            ) : (
-              <Ionicons name="refresh" size={18} color="#0059ff"/>
-            )}
-            <Text style={styles.refreshText}>{refreshing ? "Refreshing..." : "Refresh"}</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            {/* Walkthrough trigger */}
+            <TouchableOpacity ref={refHelpBtn} style={styles.helpBtn} onPress={startWalkthrough} activeOpacity={0.85}>
+              <Ionicons name="help-circle-outline" size={20} color="#2A76E8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              ref={refRefreshBtn}
+              style={[styles.refreshBtn, refreshing && { opacity: 0.7 }]}
+              onPress={handleRefresh}
+              disabled={refreshing}
+              activeOpacity={0.85}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={stylesVars.green} />
+              ) : (
+                <Ionicons name="refresh" size={18} color="#0059ff" />
+              )}
+              <Text style={styles.refreshText}>{refreshing ? "Refreshing..." : "Refresh"}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.topButtonRow}>
-          <TouchableOpacity style={[styles.pillButton, styles.addPill]} onPress={() => setAddModal(true)} activeOpacity={0.85}>
+          <TouchableOpacity
+            ref={refAddBtn}
+            style={[styles.pillButton, styles.addPill]}
+            onPress={() => setAddModal(true)}
+            activeOpacity={0.85}
+          >
             <Ionicons name="add" size={18} color="#fff" />
             <Text style={styles.pillButtonText}>{t.addDeviceButton}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.pillButton, styles.waterPill]} onPress={checkCalibrationStatus} activeOpacity={0.85}>
+          <TouchableOpacity
+            ref={refTankBtn}
+            style={[styles.pillButton, styles.waterPill]}
+            onPress={checkCalibrationStatus}
+            activeOpacity={0.85}
+          >
             <Ionicons name="water-outline" size={18} color="#fff" />
             <Text style={styles.pillButtonText}>{t.setuptank}</Text>
           </TouchableOpacity>
@@ -631,7 +900,7 @@ export default function DeviceManagementScreen() {
           <Text style={styles.noDevices}>{t.devicenomanagement}</Text>
         ) : (
           <View style={styles.grid}>
-            {devices.map((device) => {
+            {devices.map((device, idx) => {
               const isSelected = device.id === selected;
 
               const deviceImage =
@@ -644,6 +913,7 @@ export default function DeviceManagementScreen() {
               return (
                 <PulseCard key={device.id} status={device.status}>
                   <TouchableOpacity
+                    ref={idx === 0 ? refFirstDeviceCard : null}
                     activeOpacity={0.88}
                     onPress={() => handleSelect(device.id)}
                     style={[styles.deviceCard, isSelected && styles.deviceCardSelected]}
@@ -669,6 +939,19 @@ export default function DeviceManagementScreen() {
         )}
       </ScrollView>
 
+      {/* WALKTHROUGH OVERLAY (exact highlight position) */}
+      <WalkthroughOverlay
+        visible={walkVisible}
+        step={walkStep}
+        total={steps.length}
+        highlight={walkHighlight}
+        title={steps[walkStep]?.title || ""}
+        body={steps[walkStep]?.body || ""}
+        onNext={nextStep}
+        onPrev={prevStep}
+        onClose={endWalkthrough}
+      />
+
       {/* DEVICE DETAILS MODAL */}
       {activeDevice && (
         <Modal visible={true} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
@@ -683,15 +966,35 @@ export default function DeviceManagementScreen() {
               <Text style={styles.detailsTitle}>{activeDevice.name}</Text>
 
               <Text style={styles.inputLabel}>{t.devicerenamelabel}</Text>
-              <TextInput
-                style={styles.textInput}
-                value={renameText}
-                onChangeText={setRenameText}
-                placeholder="Enter new device name"
-                placeholderTextColor="#9CA3AF"
-                editable={String(activeDevice.status).toLowerCase() === "active"}
-              />
+              
+                <View style={{ position: "relative" }}>
+                  <TextInput
+                    style={[styles.textInput, { paddingRight: 50 }]}
+                    value={renameText}
+                    onChangeText={(text) => {
+                      if (text.length <= 15) {
+                        setRenameText(text);
+                      }
+                    }}
+                    placeholder="Enter new device name"
+                    placeholderTextColor="#9CA3AF"
+                    editable={String(activeDevice.status).toLowerCase() === "active"}
+                    maxLength={15}
+                  />
 
+                  <Text
+                    style={{
+                      position: "absolute",
+                      right: 12,
+                      top: "50%",
+                      transform: [{ translateY: -8 }],
+                      fontSize: 12,
+                      color: renameText.length === 15 ? "#DC2626" : "#6B7280",
+                    }}
+                  >
+                    {renameText.length}/15
+                  </Text>
+                </View>
               {activeDevice.type === "Plant" && (
                 <>
                   <Info label="Crop" value={activeDevice.crop} />
@@ -702,20 +1005,7 @@ export default function DeviceManagementScreen() {
               <Info label="Status" value={String(activeDevice.status).toLowerCase() === "active" ? "Active" : "Inactive"} />
 
               {String(activeDevice.status).toLowerCase() !== "active" && (
-                <Info
-                  label="Last Active"
-                  value={
-                    activeDevice.lastActive
-                      ? new Date(activeDevice.lastActive).toLocaleString("en-PH", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "N/A"
-                  }
-                />
+                <Info label="Last Active" value={formatPHTime(activeDevice.lastActive)} />
               )}
 
               {String(activeDevice.status).toLowerCase() === "active" && (
@@ -913,13 +1203,34 @@ export default function DeviceManagementScreen() {
               <Text style={styles.detailsTitle}>Add Plant Device</Text>
 
               <Text style={styles.inputLabel}>Device Name</Text>
-              <TextInput
-                style={styles.textInput}
-                value={newDeviceName}
-                onChangeText={setNewDeviceName}
-                placeholder="My Garden Device"
-                placeholderTextColor="#9CA3AF"
-              />
+
+              <View style={{ position: "relative" }}>
+                <TextInput
+                  style={[styles.textInput, { paddingRight: 50 }]}
+                  value={newDeviceName}
+                  onChangeText={(text) => {
+                    if (text.length <= 15) {
+                      setNewDeviceName(text);
+                    }
+                  }}
+                  placeholder="My Garden Device"
+                  placeholderTextColor="#9CA3AF"
+                  maxLength={15}
+                />
+
+                <Text
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    top: "50%",
+                    transform: [{ translateY: -8 }],
+                    fontSize: 12,
+                    color: newDeviceName.length === 15 ? "#DC2626" : "#6B7280",
+                  }}
+                >
+                  {newDeviceName.length}/15
+                </Text>
+              </View>
 
               <Text style={styles.inputLabel}>Crop</Text>
               <View style={styles.pickerWrapper}>
@@ -967,7 +1278,7 @@ export default function DeviceManagementScreen() {
         </Modal>
       )}
 
-      {/*  ACTIVATE DEVICE MODAL */}
+      {/* ACTIVATE DEVICE MODAL */}
       {activateModal && activatingDevice && (
         <Modal visible={true} transparent animationType="fade" onRequestClose={() => setActivateModal(false)}>
           <KeyboardAvoidingView style={styles.modalWrapper} behavior={Platform.OS === "ios" ? "padding" : "height"}>
@@ -1116,9 +1427,7 @@ export default function DeviceManagementScreen() {
 
             <Text style={styles.modalSubtext}>{t.ExistingCalibrationMessage}</Text>
 
-            <Text style={{ fontWeight: "900", marginBottom: 12 }}>
-              Empty Distance: {existingCalibrationDistance} cm
-            </Text>
+            <Text style={{ fontWeight: "900", marginBottom: 12 }}>Empty Distance: {existingCalibrationDistance} cm</Text>
 
             <View style={styles.twoBtnRow}>
               <TouchableOpacity
@@ -1241,6 +1550,25 @@ const styles = StyleSheet.create({
   header: { fontSize: 30, fontWeight: "900", color: stylesVars.text, letterSpacing: 0.2 },
   subHeader: { fontSize: 14, color: stylesVars.muted, marginTop: 4, marginBottom: 14, fontWeight: "600" },
 
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    columnGap: 10,
+  },
+
+  helpBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    columnGap: 6,
+    paddingHorizontal: 12,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: stylesTokens.border,
+  },
+  helpText: { fontSize: 12, fontWeight: "900", color: "#0B1220" },
+
   refreshBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1249,9 +1577,8 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 999,
     backgroundColor: "#F3F5FA",
-            borderWidth: 1,
+    borderWidth: 1,
     borderColor: stylesTokens.border,
-
   },
   refreshText: { fontSize: 12, fontWeight: "900", color: "#000000" },
 
@@ -1291,7 +1618,7 @@ const styles = StyleSheet.create({
     backgroundColor: stylesVars.card,
     borderRadius: 22,
     padding: 14,
-    paddingBottom: 46, 
+    paddingBottom: 46,
     borderWidth: 1,
     borderColor: "rgba(15,23,42,0.08)",
     shadowColor: "#000",
@@ -1546,4 +1873,76 @@ const styles = StyleSheet.create({
   },
   infoLabel: { fontSize: 13, color: stylesVars.muted, fontWeight: "800" },
   infoValue: { fontSize: 13, fontWeight: "900", color: stylesVars.text },
+
+  /* Walkthrough styles */
+  wtBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.60)",
+  },
+  wtHighlightBox: {
+    position: "absolute",
+    borderWidth: 3,
+    borderColor: "rgba(34, 226, 50, 0.95)",
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  wtTooltip: {
+    position: "absolute",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.10)",
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.10,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  wtTooltipTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  wtStepText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#374151",
+  },
+  wtCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.06)",
+  },
+  wtTitle: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: stylesVars.text,
+    marginBottom: 6,
+  },
+  wtBody: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#374151",
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  wtBtnRow: {
+    flexDirection: "row",
+    columnGap: 10,
+  },
+  wtBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  wtBtnBlue: { backgroundColor: stylesVars.blue },
+  wtBtnGray: { backgroundColor: stylesVars.grayBtn },
+  wtBtnText: { color: "#fff", fontWeight: "900" },
 });
