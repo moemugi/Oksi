@@ -430,37 +430,6 @@ const modalStyles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
-  },
-  container: {
-    width: "80%",
-    backgroundColor: "#fff",
-    padding: 20,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  title: { fontSize: 18, fontWeight: "bold", marginBottom: 8 },
-  subtitle: { fontSize: 14, color: "#555", marginBottom: 15 },
+  }, marginBottom: 15 },
   input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 5,
-    width: "100%",
-    padding: 10,
-    textAlign: "center",
-    marginBottom: 15,
-    backgroundColor: "#fff",
-    color: "#000",
-  },
-  button: {
-    backgroundColor: "#2e6b34",
-    paddingVertical: 10,
-    borderRadius: 5,
-    width: "100%",
-    alignItems: "center",
-  },
-  buttonText: { color: "#fff", fontWeight: "bold" },
-  cancelButton: { marginTop: 10 },
-  cancelText: { color: "red" },
-});
-
-
+  
