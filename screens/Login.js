@@ -25,7 +25,7 @@ export default function Login({ navigation, setOtpVerified }) {
   const [forgotError, setForgotError] = useState("");
   const [isForgotModalVisible, setIsForgotModalVisible] = useState(false);
 
-  const MAX_LOGIN_ATTEMPTS = 3;
+  const MAX_LOGIN_ATTEMPTS = 4;
   const LOGIN_TIMEOUT_SECONDS = 120;
 
   const [username, setUsername] = useState("");
