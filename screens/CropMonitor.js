@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  
   Modal,
 } from "react-native";
 import { SensorContext } from "../context/SensorContext";
